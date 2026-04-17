@@ -1,0 +1,14 @@
+{
+  "1492379935828869132": {
+    "adult_channel_ids": [],
+    "violations": {
+      "918538108411195482": [
+        {
+          "timestamp": "2026-04-14 05:53 UTC",
+          "url": "",
+          "reason": "No reason provided"
+        }
+      ]
+    }
+  }
+}
