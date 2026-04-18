@@ -126,7 +126,7 @@ class BasicCommands(commands.Cog):
                 "`/whitelist add <domain>` — Mark a domain as trusted\n"
                 "`/whitelist remove <domain>` — Remove a domain from the trusted list\n"
                 "`/whitelist list` — View all trusted domains\n"
-                "`/purge` — Delete recent messages (up to 100)\n"
+                "`/purge messages <count>` — Delete recent messages (up to 100)\n"
                 "`/purge user` — Delete messages from a specific member\n"
                 "`/purge match` — Delete messages containing specific text\n"
                 "`/purge links` — Delete messages containing links\n"
@@ -181,9 +181,10 @@ class AdminCommands(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            deleted = await interaction.channel.purge(
-                limit=count, check=check, bulk=True
-            )
+            kwargs = {"limit": count, "bulk": True}
+            if check is not None:
+                kwargs["check"] = check
+            deleted = await interaction.channel.purge(**kwargs)
             total = len(deleted)
             noun = "message was" if total == 1 else "messages were"
             await interaction.followup.send(
@@ -201,10 +202,10 @@ class AdminCommands(commands.Cog):
                 ephemeral=True,
             )
 
-    @purge_group.command(name="all", description="Delete recent messages in this channel")
+    @purge_group.command(name="messages", description="Delete recent messages in this channel")
     @app_commands.checks.has_permissions(manage_messages=True)
     @app_commands.describe(count="Number of messages to delete (1-100)")
-    async def purge_all(
+    async def purge_messages(
         self,
         interaction: discord.Interaction,
         count: app_commands.Range[int, 1, 100],
@@ -617,14 +618,20 @@ class AdminCommands(commands.Cog):
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ):
         if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(
+            msg = (
                 "I'm sorry, but it seems you do not have the necessary permissions for this. "
-                "Please speak with a server administrator if you believe this is a mistake.",
-                ephemeral=True,
+                "Please speak with a server administrator if you believe this is a mistake."
             )
         else:
-            await interaction.response.send_message(
+            msg = (
                 f"Something unexpected happened and I was unable to complete your request. "
-                f"I sincerely apologize. `({error})`",
-                ephemeral=True,
+                f"I sincerely apologize. `({error})`"
             )
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except Exception:
+            pass
