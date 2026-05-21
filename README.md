@@ -1,62 +1,172 @@
 # Mari Discord Bot
 
-A Discord moderation bot that detects malicious, phishing, scam, adult, and gambling URLs using a combination of heuristics, external scanners, AI-based classification, and image analysis.
+Mari is a powerful Discord moderation bot that automatically detects and handles malicious, phishing, scam, adult, and gambling URLs using a combination of heuristics, external threat intelligence, AI-based classification, and image analysis.
 
 ## Features
 
-- **URL Analysis**: Automated URL extraction and evaluation
-- **Heuristic Scanning**: Keyword-based detection for phishing/scam indicators
-- **External Scanners**: Integration with Google Safe Browsing, VirusTotal, and URLScan
-- **AI Classification**: Machine learning model for URL threat classification
-- **Image Analysis**: OCR-based text extraction from images for scam detection
-- **Content Scanning**: Deep content analysis for malicious patterns
-- **Guild Management**: Per-guild settings and configuration
-- **Whitelist/Blacklist**: Custom URL management
-- **User Warnings**: Track and manage user violations
-- **Structured Logging**: Comprehensive logging system
+- **URL Analysis**: Automated extraction and evaluation of URLs in messages.
+- **Heuristic Scanning**: Fast, pattern-based detection for phishing and scam indicators.
+- **External Scanners**: Integrates with Google Safe Browsing, VirusTotal, and URLScan for threat intelligence.
+- **AI Classification**: Machine learning model for advanced URL threat detection.
+- **Image Analysis**: OCR-based text extraction from images to detect scam content.
+- **Content Scanning**: Deep analysis of web page content for malicious patterns.
+- **Guild Management**: Per-server (guild) settings and configuration.
+- **Whitelist/Blacklist**: Custom management of trusted and blocked URLs.
+- **User Warnings**: Tracks and manages user violations.
+- **Structured Logging**: Comprehensive logging for moderation and debugging.
 
 ## Project Structure
 
 ```
 .
-├── ai/                           # AI/ML components
-│   ├── entropy.py               # Entropy-based analysis
-│   ├── feature_extractor.py     # Feature extraction for ML
-│   ├── page_analyzer.py         # Web page analysis
-│   ├── predict.py               # Model prediction
-│   ├── train.py                 # Model training
-│   ├── utils.py                 # AI utilities
-│   └── data/
-│       └── urls.csv             # Training data
-├── bot/                         # Discord bot implementation
-│   ├── mari_bot.py             # Main bot class
-│   ├── commands.py             # Bot commands
-│   └── events.py               # Bot event handlers
-├── core/                        # Core functionality
-│   ├── config.py               # Configuration
-│   ├── content_scanner.py      # Content analysis
-│   ├── external_scanners.py    # External API integrations
-│   ├── guild_settings.py       # Guild-specific settings
-│   ├── heuristic_scanner.py    # Heuristic detection
-│   ├── image_scanner.py        # Image analysis with OCR
-│   ├── url_evaluator.py        # URL evaluation orchestration
-│   ├── url_utils.py            # URL utilities
-│   └── verdict.py              # Verdict generation
-├── data/                        # Persistent data
-│   ├── blacklist.json          # Blacklisted URLs
-│   ├── whitelist.json          # Whitelisted URLs
-│   ├── guild_settings.json     # Guild configurations
-│   └── warnings.json           # User warnings
-├── log/                         # Log files
-├── test/                        # Unit tests
-│   ├── test_evaluator.py
-│   ├── test_heuristic.py
-│   └── test_utils.py
-├── run.py                       # Entry point
-└── requirements.txt             # Dependencies
+├── ai/                  # AI/ML components (feature extraction, model, training, utils)
+├── bot/                 # Discord bot implementation (main class, commands, events)
+├── core/                # Core logic (config, scanners, evaluators, utilities)
+├── data/                # Persistent data (whitelist, blacklist, guild settings, warnings)
+├── log/                 # Log files
+├── run.py               # Bot entry point
+├── requirements.txt      # Python dependencies
+└── README.md
 ```
 
-## Setup
+## Prerequisites
+
+- Python 3.8+
+- Discord bot token
+- (Optional) API keys for:
+  - Google Safe Browsing
+  - VirusTotal
+  - URLScan
+- (Optional) Tesseract OCR for image analysis
+
+## Installation
+
+1. Clone or download this repository.
+2. Create a virtual environment (recommended):
+   ```bash
+   python -m venv venv
+   # Windows
+   venv\Scripts\activate
+   # macOS/Linux
+   source venv/bin/activate
+   ```
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Create a `.env` file in the root directory:
+   ```
+   DISCORD_TOKEN=your_discord_bot_token
+   GOOGLE_API_KEY=your_google_api_key
+   VIRUSTOTAL_API_KEY=your_virustotal_api_key
+   URLSCAN_API_KEY=your_urlscan_api_key
+   ADMIN_ROLE_ID=your_admin_role_id
+   GUILD_ID=your_guild_id
+   ADULT_CHANNEL_IDS=channel_id_1,channel_id_2
+   ```
+
+## Usage
+
+### Run the Bot
+
+```bash
+python run.py
+```
+
+The bot will start and listen for messages in your Discord server.
+
+### Train the AI Model
+
+```bash
+python ai/train.py
+```
+This will create or update the model at `ai/model.pkl` using training data in `ai/data/urls.csv`.
+
+### Run Tests
+
+```bash
+python -m pytest test/
+```
+Or run individual test files as needed.
+
+## Image Analysis (OCR)
+
+To enable image scam detection, install Tesseract OCR:
+
+- **Windows**: Download from https://github.com/UB-Mannheim/tesseract/wiki and install. Update `.env` with the Tesseract path if needed.
+- **macOS**: `brew install tesseract`
+- **Linux**: `sudo apt-get install tesseract-ocr`
+
+To disable OCR if Tesseract is not available, set in `.env`:
+```
+OCR_ENABLED=false
+```
+
+## Configuration
+
+### Environment Variables
+
+- `DISCORD_TOKEN` (required): Your Discord bot token
+- `GOOGLE_API_KEY`, `VIRUSTOTAL_API_KEY`, `URLSCAN_API_KEY` (optional): API keys for external scanners
+- `ADMIN_ROLE_ID`, `GUILD_ID`, `ADULT_CHANNEL_IDS` (optional): Admin and server settings
+- `OCR_ENABLED` (optional, default: true): Enable/disable image OCR
+- `AI_THRESHOLD`, `AI_SCAM_THRESHOLD` (optional): Model thresholds
+- `AI_MODEL_PATH` (optional): Custom model path
+
+### Data Files
+
+- `data/blacklist.json`: Blocked URLs
+- `data/whitelist.json`: Trusted URLs
+- `data/guild_settings.json`: Per-guild settings
+- `data/warnings.json`: User warnings
+
+## Architecture
+
+- **URL Evaluator**: Orchestrates the full URL evaluation pipeline.
+- **Heuristic Scanner**: Fast, pattern-based detection.
+- **External Scanners**: Integrates with Google Safe Browsing, VirusTotal, URLScan.
+- **Content Scanner**: Analyzes web page content for threats.
+- **Image Scanner**: OCR-based image text analysis.
+- **AI Model**: Machine learning for threat classification.
+- **Discord Bot**: Handles events, commands, and moderation.
+
+## Logging
+
+Logs are stored in the `log/` directory. Check logs for analysis results, errors, and moderation actions.
+
+## Troubleshooting
+
+- **Bot not responding**: Check `DISCORD_TOKEN`, permissions, and logs.
+- **URLs not detected**: Ensure message content intent is enabled, check whitelist, review heuristics.
+- **AI model issues**: Retrain with more data, adjust thresholds.
+- **OCR not working**: Verify Tesseract installation, set `OCR_ENABLED=false` if needed.
+
+## Guild Settings
+
+Manage adult channels with slash commands (requires Manage Server permission):
+
+- `/adultchannel add #channel`
+- `/adultchannel remove #channel`
+- `/adultchannel list`
+- `/adultchannel clear`
+
+Settings are stored in `data/guild_settings.json`.
+
+## Whitelist / Blacklist
+
+Add trusted domains to `data/whitelist.json` and blocked domains to `data/blacklist.json`.
+
+Example:
+```
+[
+  "facebook.com",
+  "youtube.com"
+]
+```
+
+## License
+
+MIT
 
 ### Prerequisites
 

@@ -1,7 +1,6 @@
 import discord
 import logging
 from discord.ext import commands
-
 from core.config import Config
 from core.external_scanners import ExternalScanners
 from core.url_evaluator import URLEvaluator
@@ -63,5 +62,10 @@ class MariBot(commands.Bot):
             await interaction.response.send_message("Command error. Please try again.", ephemeral=True)
 
     async def on_message(self, message):
+        if message.author.bot:
+            return
+
+        # MessageHandler xử lý toàn bộ: URL scan + OCR + ban + log
         await self.handler.handle(message)
+
         await self.process_commands(message)

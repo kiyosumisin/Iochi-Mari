@@ -11,13 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 def _log_page_content(url: str, verdict: str) -> None:
-    """
-    Fetch the page and log its content in the same pipe-separated style as mari.log:
-
-    INFO | ai.page_analyzer | url=... | status=200 | verdict=malware |
-          redirects=0 | domain_changed=0 | has_login=1 | signals=login_form,ext_form |
-          title=... | content=...
-    """
     try:
         from ai.page_analyzer import analyze_page
         import requests
@@ -35,22 +28,18 @@ def _log_page_content(url: str, verdict: str) -> None:
         resp = requests.get(url, timeout=8, headers=_HEADERS, allow_redirects=True)
         soup = BeautifulSoup(resp.text, "lxml")
 
-        # Extract title
         title = ""
         if soup.title and soup.title.string:
             title = soup.title.string.strip()
 
-        # Extract visible text
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
         content = textwrap.shorten(
             soup.get_text(" ", strip=True), width=300, placeholder="..."
         )
 
-        # Get features from page_analyzer
         features = analyze_page(url)
 
-        # Build signals list
         signals = []
         if features.get("has_login_form"):
             signals.append("login_form")
@@ -144,6 +133,101 @@ class MessageHandler:
             self.warns.pop(key, None)
             self._save_warns()
 
+    # ------------------------------------------------------------------
+    # Helpers for scam image action
+    # ------------------------------------------------------------------
+    def _get_log_channel(self, guild: discord.Guild):
+        """Trả về log channel nếu config có LOG_CHANNEL_ID."""
+        log_channel_id = getattr(self.config, "LOG_CHANNEL_ID", 0)
+        if log_channel_id:
+            return guild.get_channel(int(log_channel_id))
+        return None
+
+    async def _handle_scam_image(
+        self,
+        message: discord.Message,
+        verdict: str,
+        filename: str,
+        ocr_text: str,
+    ) -> None:
+        """
+        Khi OCR phát hiện scam image:
+          1. Xoá message
+          2. Ban user
+          3. Gửi alert ngắn vào channel
+          4. Log chi tiết vào log channel
+        """
+        author  = message.author
+        channel = message.channel
+        guild   = message.guild
+
+        # Bảo vệ: không ban admin
+        if guild and author.guild_permissions.administrator:
+            logger.warning("Scam image from admin %s — skipping ban.", author)
+            return
+
+        # 1. Xoá message
+        try:
+            await message.delete()
+            logger.info(
+                "Deleted scam image message | user=%s | file=%s | verdict=%s",
+                author.id, filename, verdict,
+            )
+        except discord.NotFound:
+            logger.warning("Message already deleted | file=%s", filename)
+        except discord.Forbidden:
+            logger.warning("No permission to delete message | file=%s", filename)
+
+        # 2. Ban user
+        banned = False
+        try:
+            await guild.ban(
+                author,
+                reason=f"Scam image detected ({verdict}) | file={filename}",
+                delete_message_days=1,
+            )
+            banned = True
+            logger.info("Banned user %s (ID: %s) for scam image.", author, author.id)
+        except discord.Forbidden:
+            logger.error("No permission to ban %s.", author)
+        except Exception as exc:
+            logger.error("Ban failed for %s: %s", author, exc)
+
+        # 3. Alert ngắn gọn vào channel
+        try:
+            action = "Message removed. User banned." if banned else "Message removed."
+            alert = (
+                f"**Scam image detected** from **{author}** — Verdict: `{verdict}`\n"
+                f"Image: `{filename}`\n"
+                f"{action}"
+            )
+            await channel.send(alert)
+        except Exception as exc:
+            logger.warning("Could not send scam alert: %s", exc)
+
+        # 4. Log chi tiết vào log channel
+        if guild:
+            log_channel = self._get_log_channel(guild)
+            if log_channel:
+                try:
+                    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    preview = ocr_text[:200].replace("\n", " ") if ocr_text else "(empty)"
+                    log_msg = (
+                        f"```\n"
+                        f"[SCAM IMAGE LOG] {ts}\n"
+                        f"Server  : {guild.name}\n"
+                        f"Channel : #{channel.name}\n"
+                        f"User    : {author} (ID: {author.id})\n"
+                        f"File    : {filename}\n"
+                        f"Verdict : {verdict}\n"
+                        f"OCR     : {preview}\n"
+                        f"Banned  : {banned}\n"
+                        f"```"
+                    )
+                    await log_channel.send(log_msg)
+                except Exception as exc:
+                    logger.warning("Could not send to log channel: %s", exc)
+
     async def handle(self, message):
         if message.author.bot:
             return
@@ -168,7 +252,6 @@ class MessageHandler:
                 verdict,
             )
 
-            # Log page content for any non-safe verdict
             if verdict not in ("safe", "none"):
                 _log_page_content(url, verdict)
 
@@ -250,26 +333,15 @@ class MessageHandler:
                         verdict,
                     )
 
+                    # ── Scam image: xoá + ban + log ──────────────────────
                     if verdict in ("scam", "suspected"):
-                        try:
-                            await message.delete()
-                            admin_role_id = getattr(self.config, "ADMIN_ROLE_ID", 0)
-                            admin_mention = (
-                                f"<@&{admin_role_id}>" if admin_role_id else "@admin"
-                            )
-                            await message.channel.send(
-                                f"{admin_mention} removed a suspected scam image from "
-                                f"{message.author.mention}. Verdict: {verdict}."
-                            )
-                        except discord.NotFound:
-                            logger.warning(
-                                "Message not found for deletion | attachment=%s",
-                                attachment.filename,
-                            )
-                        except discord.Forbidden:
-                            await message.channel.send(
-                                "Mari does not have sufficient permissions to take action."
-                            )
+                        await self._handle_scam_image(
+                            message=message,
+                            verdict=verdict,
+                            filename=attachment.filename,
+                            ocr_text=text,
+                        )
+
             except Exception as exc:
                 logger.warning(
                     "OCR failed | message=%s | attachment=%s | error=%s",
