@@ -7,6 +7,68 @@
           "timestamp": "2026-04-14 05:53 UTC",
           "url": "",
           "reason": "No reason provided"
+        },
+        {
+          "timestamp": "2026-06-12 09:21 UTC",
+          "url": "",
+          "reason": "Scam image (scam) | file=image.png"
+        },
+        {
+          "timestamp": "2026-06-12 09:34 UTC",
+          "url": "",
+          "reason": "Scam image (scam) | file=image.png"
+        }
+      ]
+    },
+    "stats": {
+      "auto_bans": 2
+    }
+  },
+  "894938982692061244": {
+    "stats": {
+      "links_blocked": 8,
+      "auto_bans": 7
+    },
+    "violations": {
+      "918538108411195482": [
+        {
+          "timestamp": "2026-06-12 10:14 UTC",
+          "url": "",
+          "reason": "Honeypot scam (image:scam)"
+        },
+        {
+          "timestamp": "2026-06-12 10:20 UTC",
+          "url": "",
+          "reason": "Honeypot: kept posting after 3 warnings"
+        },
+        {
+          "timestamp": "2026-06-12 10:29 UTC",
+          "url": "",
+          "reason": "Honeypot scam (link:phishing)"
+        },
+        {
+          "timestamp": "2026-06-12 10:52 UTC",
+          "url": "",
+          "reason": "Honeypot scam (link:phishing)"
+        },
+        {
+          "timestamp": "2026-06-13 01:44 UTC",
+          "url": "",
+          "reason": "Honeypot: kept posting after 3 warnings"
+        }
+      ],
+      "469764312328699934": [
+        {
+          "timestamp": "2026-06-12 19:08 UTC",
+          "url": "",
+          "reason": "Honeypot scam (image:scam)"
+        }
+      ],
+      "1064355036060196935": [
+        {
+          "timestamp": "2026-06-13 01:42 UTC",
+          "url": "",
+          "reason": "Honeypot scam (image:scam)"
         }
       ]
     }

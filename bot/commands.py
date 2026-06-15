@@ -83,10 +83,16 @@ class BasicCommands(commands.Cog):
             )
             return
 
+        guild_threshold = (
+            self.bot.guild_settings.get_threshold(interaction.guild.id)
+            if interaction.guild
+            else None
+        )
+
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         try:
-            verdict = await self.bot.evaluator.evaluate(url)
+            verdict = await self.bot.evaluator.evaluate(url, threshold=guild_threshold)
             embed = _verdict_embed(url, verdict)
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
@@ -201,7 +207,7 @@ class AdminCommands(commands.Cog):
             )
 
     @purge_group.command(name="messages", description="Delete recent messages in this channel")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(count="Number of messages to delete (1-100)")
     async def purge_messages(
         self,
@@ -211,7 +217,7 @@ class AdminCommands(commands.Cog):
         await self._do_purge(interaction, count, label="all")
 
     @purge_group.command(name="user", description="Delete messages from a specific member")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         user="The member whose messages to delete",
         count="Number of messages to scan (1-100)",
@@ -229,7 +235,7 @@ class AdminCommands(commands.Cog):
         )
 
     @purge_group.command(name="match", description="Delete messages containing specific text")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         text="Text to search for in messages",
         count="Number of messages to scan (1-100)",
@@ -247,7 +253,7 @@ class AdminCommands(commands.Cog):
         )
 
     @purge_group.command(name="links", description="Delete messages containing links")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(count="Number of messages to scan (1-100)")
     async def purge_links(
         self,
@@ -261,7 +267,7 @@ class AdminCommands(commands.Cog):
         )
 
     @purge_group.command(name="images", description="Delete messages with image attachments")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(count="Number of messages to scan (1-100)")
     async def purge_images(
         self,
@@ -275,7 +281,7 @@ class AdminCommands(commands.Cog):
         )
 
     @purge_group.command(name="bots", description="Delete messages sent by bots")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(count="Number of messages to scan (1-100)")
     async def purge_bots(
         self,
@@ -289,7 +295,7 @@ class AdminCommands(commands.Cog):
         )
 
     @purge_group.command(name="humans", description="Delete messages sent by human members")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(count="Number of messages to scan (1-100)")
     async def purge_humans(
         self,
@@ -303,7 +309,7 @@ class AdminCommands(commands.Cog):
         )
 
     @purge_group.command(name="mentions", description="Delete messages containing mentions")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(count="Number of messages to scan (1-100)")
     async def purge_mentions(
         self,
@@ -317,7 +323,7 @@ class AdminCommands(commands.Cog):
         )
 
     @purge_group.command(name="embeds", description="Delete messages containing embeds")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(count="Number of messages to scan (1-100)")
     async def purge_embeds(
         self,
@@ -460,7 +466,7 @@ class AdminCommands(commands.Cog):
 
     # -- Ban / Unban ---------------------------------------------------------
     @app_commands.command(name="ban", description="Remove a member from this server")
-    @app_commands.checks.has_permissions(ban_members=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(user="The member to remove", reason="Reason for the removal")
     async def ban(
         self,
@@ -499,7 +505,7 @@ class AdminCommands(commands.Cog):
             )
 
     @app_commands.command(name="unban", description="Lift a ban by Discord user ID")
-    @app_commands.checks.has_permissions(ban_members=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(user_id="The Discord user ID to unban")
     async def unban(self, interaction: discord.Interaction, user_id: str):
         if not interaction.guild:

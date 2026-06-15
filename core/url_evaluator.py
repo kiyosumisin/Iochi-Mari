@@ -42,13 +42,20 @@ class URLEvaluator:
                 return True
         return False
 
-    async def evaluate(self, url: str):
+    @staticmethod
+    def _cache_key(url: str, threshold: float | None) -> str:
+        """Verdicts depend on the decision threshold, so it is part of the key."""
+        return f"{threshold}|{url}"
+
+    async def evaluate(self, url: str, threshold: float | None = None):
         now = time.time()
 
         original_url = url
+        cache_key = self._cache_key(original_url, threshold)
 
-        if url in self.cache and now - self.cache[url]["time"] < self.CACHE_TTL:
-            return self.cache[url]["verdict"]
+        cached = self.cache.get(cache_key)
+        if cached and now - cached["time"] < self.CACHE_TTL:
+            return cached["verdict"]
 
         verdicts = []
         sources = []
@@ -62,12 +69,12 @@ class URLEvaluator:
 
         domain = URLUtils.get_domain(url)
         if self._is_listed(domain, self.whitelist):
-            self.cache[url] = {"time": now, "verdict": "safe"}
+            self.cache[cache_key] = {"time": now, "verdict": "safe"}
             logger.info("URL whitelisted | url=%s | domain=%s", url, domain)
             return "safe"
 
         if self._is_listed(domain, self.blacklist):
-            self.cache[url] = {"time": now, "verdict": "malware"}
+            self.cache[cache_key] = {"time": now, "verdict": "malware"}
             logger.info("URL blacklisted | url=%s | domain=%s", url, domain)
             return "malware"
 
@@ -78,7 +85,9 @@ class URLEvaluator:
         has_soft_category = heur in ("adult", "gambling")
 
         try:
-            prob, is_malicious = predict_url(url)
+            prediction = predict_url(url, threshold=threshold)
+            prob = prediction.probability
+            is_malicious = prediction.is_malicious
             override_threshold = float(os.getenv("AI_OVERRIDE_THRESHOLD", "0.9"))
             if is_malicious:
                 if (not has_soft_category) or prob >= override_threshold:
@@ -113,7 +122,7 @@ class URLEvaluator:
             if v in ("adult", "gambling", "scam"):
                 final = v
 
-        self.cache[original_url] = {"time": now, "verdict": final}
+        self.cache[cache_key] = {"time": now, "verdict": final}
         logger.info(
             "URL final verdict | url=%s | verdict=%s | sources=%s",
             original_url,

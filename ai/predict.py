@@ -122,8 +122,8 @@ def _build_explainer(pipeline) -> Optional[object]:
     """
     try:
         import shap
-    except ImportError:
-        logger.warning("shap not installed — explainability disabled. Run: pip install shap")
+    except Exception as exc:
+        logger.warning("shap unavailable — explainability disabled: %s", exc)
         return None
 
     clf = pipeline.named_steps.get("clf")
@@ -197,9 +197,17 @@ def load_model():
             current_version,
         )
 
-    # Build SHAP artefacts once, at startup
+    # Build SHAP artefacts once, at startup.
+    # SHAP drags in heavy deps (shap -> IPython) that the bot never uses — it
+    # only reads probability/is_malicious, not the SHAP explanation. So building
+    # the explainer is opt-in via AI_ENABLE_SHAP. This keeps the first prediction
+    # fast and avoids crashing if the shap/IPython import chain is broken/slow on
+    # the host. (app.py can set AI_ENABLE_SHAP=true to get /predict explanations.)
     _FEATURE_NAMES = _build_feature_names(_MODEL)
-    _EXPLAINER = _build_explainer(_MODEL)
+    if os.getenv("AI_ENABLE_SHAP", "false").lower() in ("1", "true", "yes"):
+        _EXPLAINER = _build_explainer(_MODEL)
+    else:
+        _EXPLAINER = None
 
     return _MODEL
 
