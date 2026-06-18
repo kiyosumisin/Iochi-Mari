@@ -22,7 +22,8 @@
     },
     "stats": {
       "auto_bans": 2
-    }
+    },
+    "honeypot_channel_id": 1492379938941308961
   },
   "894938982692061244": {
     "stats": {
@@ -71,6 +72,8 @@
           "reason": "Honeypot scam (image:scam)"
         }
       ]
-    }
+    },
+    "honeypot_channel_id": 1514824682149253120,
+    "log_channel_id": 895696484937371689
   }
 }

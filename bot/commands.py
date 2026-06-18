@@ -1,5 +1,7 @@
+import csv
 import time
 from collections import defaultdict
+from pathlib import Path
 
 import discord
 from discord import app_commands
@@ -34,17 +36,17 @@ def _verdict_embed(url: str, verdict: str) -> discord.Embed:
     if verdict in ("malware", "phishing", "scam"):
         color = discord.Color.red()
         label = f"Harmful ({verdict})"
-        footer = "I have removed this link for your safety. Please be careful."
+        footer = "I have quietly taken this link away to keep everyone safe. Please take care of yourself."
     elif verdict in ("adult", "gambling"):
         color = discord.Color.orange()
         label = f"Flagged ({verdict})"
-        footer = "This link contains content that may not be appropriate here."
+        footer = "This one may not belong here. Let us be considerate of one another, if you would."
     else:
         color = discord.Color.green()
         label = "Safe"
-        footer = "This link appears to be safe. Stay vigilant nonetheless."
+        footer = "This link appears safe. Even so, please stay careful — your wellbeing is what matters to me."
 
-    embed = discord.Embed(title="Link Inspection Result", color=color)
+    embed = discord.Embed(title="Mari's Link Check", color=color)
     embed.add_field(name="URL", value=f"`{url}`", inline=False)
     embed.add_field(name="Verdict", value=label, inline=True)
     embed.set_footer(text=footer)
@@ -61,7 +63,7 @@ class BasicCommands(commands.Cog):
     @commands.command()
     async def ping(self, ctx: commands.Context):
         await ctx.send(
-            "Yes, I am here. Please do not hesitate to reach out if you need anything."
+            "Yes, I am here. Please do not hesitate to call upon me — helping you is never any trouble at all."
         )
 
     @app_commands.command(name="check", description="Check whether a URL is safe or harmful")
@@ -69,16 +71,16 @@ class BasicCommands(commands.Cog):
     async def check(self, interaction: discord.Interaction, url: str):
         if _is_rate_limited(interaction.user.id):
             await interaction.response.send_message(
-                f"I apologize, but you have been sending requests a little too quickly. "
-                f"Please allow me {_RATE_WINDOW} seconds to catch my breath before trying again.",
+                f"Forgive me — you are asking a little quickly, and I cannot quite keep pace. "
+                f"Please allow me {_RATE_WINDOW} seconds to gather myself, then do try again.",
                 ephemeral=True,
             )
             return
 
         if not _is_valid_url(url):
             await interaction.response.send_message(
-                "I'm sorry, but that does not appear to be a valid URL. "
-                "Could you make sure it begins with `http://` or `https://`?",
+                "I am sorry, but that does not look like a valid link to me. "
+                "Might you make sure it begins with `http://` or `https://`?",
                 ephemeral=True,
             )
             return
@@ -97,18 +99,18 @@ class BasicCommands(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
             await interaction.followup.send(
-                f"I'm afraid something went wrong while inspecting that link. "
-                f"I apologize for the inconvenience. `({e})`",
+                f"I am afraid something went amiss while I was looking over that link. "
+                f"Please forgive me. `({e})`",
                 ephemeral=True,
             )
 
     @app_commands.command(name="help", description="View all available commands")
     async def help(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="How may I assist you?",
+            title="How may I help you?",
             description=(
-                "My name is Mari. I am here to help keep this server safe "
-                "and to assist you however I can. Below are the things I am able to do."
+                "I am Mari, of the Sisterhood. I will do all I can to keep everyone here safe "
+                "and to lend a hand however you may need. Here is everything I can do for you:"
             ),
             color=discord.Color.blurple(),
         )
@@ -130,22 +132,20 @@ class BasicCommands(commands.Cog):
                 "`/whitelist add <domain>` — Mark a domain as trusted\n"
                 "`/whitelist remove <domain>` — Remove a domain from the trusted list\n"
                 "`/whitelist list` — View all trusted domains\n"
-                "`/purge messages <count>` — Delete recent messages (up to 100)\n"
-                "`/purge user` — Delete messages from a specific member\n"
-                "`/purge match` — Delete messages containing specific text\n"
-                "`/purge links` — Delete messages containing links\n"
-                "`/purge images` — Delete messages with attachments\n"
-                "`/purge bots` — Delete messages sent by bots\n"
-                "`/purge humans` — Delete messages sent by humans\n"
+                "`/purge <amount> [filter]` — Delete up to 1000 messages, optionally filtered "
+                "(any/user/match/not/startswith/endswith/links/invites/images/embeds/mentions/bots/humans)\n"
                 "`/ban <user> [reason]` — Remove a member from this server\n"
                 "`/unban <user_id>` — Lift a ban by user ID\n"
                 "`/history <user>` — Review a member's past violations\n"
                 "`/threshold <0.0-1.0>` — Adjust the detection sensitivity\n"
-                "`/stats` — View this server's protection summary"
+                "`/stats` — View this server's protection summary\n"
+                "`/honeypot set #channel` / `off` / `status` — Manage the bait channel\n"
+                "`/logchannel set #channel` / `off` / `status` — Choose where I send moderation logs\n"
+                "`/scamlog` — Show the log of scams caught (evidence)"
             ),
             inline=False,
         )
-        embed.set_footer(text="Please feel free to ask if you need anything else.")
+        embed.set_footer(text="If there is anything else you need, please do not hesitate to ask. It would be my pleasure to help.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -156,254 +156,203 @@ class AdminCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # -- Purge group --------------------------------------------------------
-    purge_group = app_commands.Group(
+    # -- Purge ---------------------------------------------------------------
+    @app_commands.command(
         name="purge",
-        description="Delete messages in this channel with various filters",
+        description="Delete up to 1000 messages, optionally filtered",
     )
-
-    async def _do_purge(
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.checks.cooldown(1, 5.0)
+    @app_commands.describe(
+        amount="How many messages to scan and delete (1-1000)",
+        filter="Which messages to delete (default: any)",
+        user="Member whose messages to delete — for the 'user' filter",
+        text="Text to look for — for match / not / startswith / endswith",
+    )
+    @app_commands.choices(
+        filter=[
+            app_commands.Choice(name="any — any message", value="any"),
+            app_commands.Choice(name="user — sent by a member", value="user"),
+            app_commands.Choice(name="match — contains text", value="match"),
+            app_commands.Choice(name="not — does not contain text", value="not"),
+            app_commands.Choice(name="startswith — starts with text", value="startswith"),
+            app_commands.Choice(name="endswith — ends with text", value="endswith"),
+            app_commands.Choice(name="links — contains a link", value="links"),
+            app_commands.Choice(name="invites — contains an invite", value="invites"),
+            app_commands.Choice(name="images — has an image/attachment", value="images"),
+            app_commands.Choice(name="embeds — has an embed", value="embeds"),
+            app_commands.Choice(name="mentions — has a mention", value="mentions"),
+            app_commands.Choice(name="bots — sent by bots", value="bots"),
+            app_commands.Choice(name="humans — sent by humans", value="humans"),
+        ]
+    )
+    async def purge(
         self,
         interaction: discord.Interaction,
-        count: int,
-        check=None,
-        label: str = "messages",
+        amount: app_commands.Range[int, 1, 1000],
+        filter: app_commands.Choice[str] = None,
+        user: discord.Member = None,
+        text: str = None,
     ):
-        """Shared purge executor used by all subcommands."""
+        mode = filter.value if filter else "any"
+
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.",
-                ephemeral=True,
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         if not isinstance(interaction.channel, discord.TextChannel):
             await interaction.response.send_message(
-                "I'm sorry, but I can only delete messages in a text channel.",
+                "I am sorry, I can only tidy messages within a text channel.", ephemeral=True
+            )
+            return
+        if mode == "user" and user is None:
+            await interaction.response.send_message(
+                "For that filter I need to know whose messages — please use the `user` option.",
+                ephemeral=True,
+            )
+            return
+        if mode in ("match", "not", "startswith", "endswith") and not text:
+            await interaction.response.send_message(
+                "For that filter I need some text to look for — please use the `text` option.",
                 ephemeral=True,
             )
             return
 
+        t = (text or "").lower()
+        checks = {
+            "any": None,
+            "user": lambda m: user is not None and m.author.id == user.id,
+            "match": lambda m: t in m.content.lower(),
+            "not": lambda m: t not in m.content.lower(),
+            "startswith": lambda m: m.content.lower().startswith(t),
+            "endswith": lambda m: m.content.lower().endswith(t),
+            "links": lambda m: "http://" in m.content or "https://" in m.content,
+            "invites": lambda m: any(
+                s in m.content.lower()
+                for s in ("discord.gg/", "discord.com/invite", "discordapp.com/invite")
+            ),
+            "images": lambda m: any(
+                (a.content_type or "").startswith("image/")
+                or a.filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))
+                for a in m.attachments
+            ),
+            "embeds": lambda m: bool(m.embeds),
+            "mentions": lambda m: bool(m.mentions) or bool(m.role_mentions),
+            "bots": lambda m: m.author.bot,
+            "humans": lambda m: not m.author.bot,
+        }
+        labels = {
+            "any": "any messages",
+            "user": f"from {user.display_name}" if user else "from a member",
+            "match": f'containing "{text}"',
+            "not": f'not containing "{text}"',
+            "startswith": f'starting with "{text}"',
+            "endswith": f'ending with "{text}"',
+            "links": "containing links",
+            "invites": "containing invites",
+            "images": "with images",
+            "embeds": "with embeds",
+            "mentions": "with mentions",
+            "bots": "from bots",
+            "humans": "from humans",
+        }
+        check = checks.get(mode)
+        label = labels.get(mode, "messages")
+
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            kwargs = {"limit": count, "bulk": True}
+            kwargs = {"limit": amount, "bulk": True}
             if check is not None:
                 kwargs["check"] = check
             deleted = await interaction.channel.purge(**kwargs)
             total = len(deleted)
-            noun = "message was" if total == 1 else "messages were"
+            noun = "message" if total == 1 else "messages"
             await interaction.followup.send(
-                f"I have tidied things up. {total} {noun} removed ({label}).",
+                f"There, I have tidied things up — I removed {total} {noun} ({label}).",
                 ephemeral=True,
             )
         except discord.Forbidden:
             await interaction.followup.send(
-                "I apologize, but I do not have the necessary permissions to delete messages here.",
+                "Forgive me — I have not been given the permissions I would need to tidy messages here.",
                 ephemeral=True,
             )
         except discord.HTTPException as e:
             await interaction.followup.send(
-                f"Something went wrong while clearing the messages. I'm sorry. `({e})`",
+                f"Something went amiss while I was tidying up. I am sorry. `({e})`",
                 ephemeral=True,
             )
-
-    @purge_group.command(name="messages", description="Delete recent messages in this channel")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(count="Number of messages to delete (1-100)")
-    async def purge_messages(
-        self,
-        interaction: discord.Interaction,
-        count: app_commands.Range[int, 1, 100],
-    ):
-        await self._do_purge(interaction, count, label="all")
-
-    @purge_group.command(name="user", description="Delete messages from a specific member")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(
-        user="The member whose messages to delete",
-        count="Number of messages to scan (1-100)",
-    )
-    async def purge_user(
-        self,
-        interaction: discord.Interaction,
-        user: discord.Member,
-        count: app_commands.Range[int, 1, 100] = 100,
-    ):
-        await self._do_purge(
-            interaction, count,
-            check=lambda m: m.author.id == user.id,
-            label=f"from {user.display_name}",
-        )
-
-    @purge_group.command(name="match", description="Delete messages containing specific text")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(
-        text="Text to search for in messages",
-        count="Number of messages to scan (1-100)",
-    )
-    async def purge_match(
-        self,
-        interaction: discord.Interaction,
-        text: str,
-        count: app_commands.Range[int, 1, 100] = 100,
-    ):
-        await self._do_purge(
-            interaction, count,
-            check=lambda m: text.lower() in m.content.lower(),
-            label=f'matching "{text}"',
-        )
-
-    @purge_group.command(name="links", description="Delete messages containing links")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(count="Number of messages to scan (1-100)")
-    async def purge_links(
-        self,
-        interaction: discord.Interaction,
-        count: app_commands.Range[int, 1, 100] = 100,
-    ):
-        await self._do_purge(
-            interaction, count,
-            check=lambda m: "http://" in m.content or "https://" in m.content,
-            label="containing links",
-        )
-
-    @purge_group.command(name="images", description="Delete messages with image attachments")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(count="Number of messages to scan (1-100)")
-    async def purge_images(
-        self,
-        interaction: discord.Interaction,
-        count: app_commands.Range[int, 1, 100] = 100,
-    ):
-        await self._do_purge(
-            interaction, count,
-            check=lambda m: bool(m.attachments) or bool(m.embeds),
-            label="with images/attachments",
-        )
-
-    @purge_group.command(name="bots", description="Delete messages sent by bots")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(count="Number of messages to scan (1-100)")
-    async def purge_bots(
-        self,
-        interaction: discord.Interaction,
-        count: app_commands.Range[int, 1, 100] = 100,
-    ):
-        await self._do_purge(
-            interaction, count,
-            check=lambda m: m.author.bot,
-            label="from bots",
-        )
-
-    @purge_group.command(name="humans", description="Delete messages sent by human members")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(count="Number of messages to scan (1-100)")
-    async def purge_humans(
-        self,
-        interaction: discord.Interaction,
-        count: app_commands.Range[int, 1, 100] = 100,
-    ):
-        await self._do_purge(
-            interaction, count,
-            check=lambda m: not m.author.bot,
-            label="from humans",
-        )
-
-    @purge_group.command(name="mentions", description="Delete messages containing mentions")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(count="Number of messages to scan (1-100)")
-    async def purge_mentions(
-        self,
-        interaction: discord.Interaction,
-        count: app_commands.Range[int, 1, 100] = 100,
-    ):
-        await self._do_purge(
-            interaction, count,
-            check=lambda m: bool(m.mentions) or bool(m.role_mentions),
-            label="containing mentions",
-        )
-
-    @purge_group.command(name="embeds", description="Delete messages containing embeds")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(count="Number of messages to scan (1-100)")
-    async def purge_embeds(
-        self,
-        interaction: discord.Interaction,
-        count: app_commands.Range[int, 1, 100] = 100,
-    ):
-        await self._do_purge(
-            interaction, count,
-            check=lambda m: bool(m.embeds),
-            label="containing embeds",
-        )
 
     # -- Adult channel group -------------------------------------------------
     adult_group = app_commands.Group(
         name="adultchannel",
         description="Manage channels designated for adult content",
+        default_permissions=discord.Permissions(administrator=True),
     )
 
     @adult_group.command(name="add", description="Designate a channel for adult content")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(channel="The channel to designate")
     async def adult_add(self, interaction: discord.Interaction, channel: discord.TextChannel):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         self.bot.guild_settings.add_adult_channel(interaction.guild.id, channel.id)
         await interaction.response.send_message(
-            f"Understood. {channel.mention} has been added to the designated list. "
-            f"I will allow adult content there from now on.",
+            f"Understood. I have set {channel.mention} aside for such content, "
+            f"and will permit it there from now on.",
             ephemeral=True,
         )
 
     @adult_group.command(name="remove", description="Remove a channel from the designated list")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(channel="The channel to remove")
     async def adult_remove(self, interaction: discord.Interaction, channel: discord.TextChannel):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         self.bot.guild_settings.remove_adult_channel(interaction.guild.id, channel.id)
         await interaction.response.send_message(
-            f"Noted. {channel.mention} has been removed from the designated list.",
+            f"Noted. I have removed {channel.mention} from that list.",
             ephemeral=True,
         )
 
     @adult_group.command(name="list", description="View all designated adult channels")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(administrator=True)
     async def adult_list(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         channel_ids = self.bot.guild_settings.get_adult_channels(interaction.guild.id)
         if not channel_ids:
             await interaction.response.send_message(
-                "It seems no channels have been designated yet.", ephemeral=True
+                "It seems no channels have been set aside yet.", ephemeral=True
             )
             return
         mentions = [f"<#{cid}>" for cid in sorted(channel_ids)]
         await interaction.response.send_message(
-            "The following channels have been designated for adult content:\n" + ", ".join(mentions),
+            "These are the channels I have set aside for such content:\n" + ", ".join(mentions),
             ephemeral=True,
         )
 
     @adult_group.command(name="clear", description="Clear all designated adult channels")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(administrator=True)
     async def adult_clear(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         self.bot.guild_settings.clear_adult_channels(interaction.guild.id)
         await interaction.response.send_message(
-            "The designated channel list has been cleared. I will treat all channels equally from now on.",
+            "I have cleared that list, and will watch over every channel alike from now on.",
             ephemeral=True,
         )
 
@@ -411,61 +360,182 @@ class AdminCommands(commands.Cog):
     whitelist_group = app_commands.Group(
         name="whitelist",
         description="Manage trusted domains that skip URL scanning",
+        default_permissions=discord.Permissions(administrator=True),
     )
 
     @whitelist_group.command(name="add", description="Add a trusted domain to the whitelist")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(domain="Domain to trust (e.g. google.com)")
     async def whitelist_add(self, interaction: discord.Interaction, domain: str):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         domain = domain.strip().lower().removeprefix("http://").removeprefix("https://").split("/")[0]
         self.bot.guild_settings.add_whitelist(interaction.guild.id, domain)
         await interaction.response.send_message(
-            f"I have added `{domain}` to the trusted list. I will not flag links from this domain.",
+            f"I have placed my trust in `{domain}`, and will let its links pass without worry.",
             ephemeral=True,
         )
 
     @whitelist_group.command(name="remove", description="Remove a domain from the trusted list")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(domain="Domain to remove")
     async def whitelist_remove(self, interaction: discord.Interaction, domain: str):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         domain = domain.strip().lower()
         self.bot.guild_settings.remove_whitelist(interaction.guild.id, domain)
         await interaction.response.send_message(
-            f"`{domain}` has been removed from the trusted list. I will resume monitoring it.",
+            f"I have removed `{domain}` from those I trust, and will keep a gentle watch on it once more.",
             ephemeral=True,
         )
 
     @whitelist_group.command(name="list", description="View all trusted domains")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(administrator=True)
     async def whitelist_list(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         domains = self.bot.guild_settings.get_whitelist(interaction.guild.id)
         if not domains:
             await interaction.response.send_message(
-                "The trusted list is currently empty.", ephemeral=True
+                "There are no trusted domains just yet.", ephemeral=True
             )
             return
         await interaction.response.send_message(
-            "The following domains are currently trusted:\n" + "\n".join(f"- `{d}`" for d in sorted(domains)),
+            "These are the domains I currently trust:\n" + "\n".join(f"- `{d}`" for d in sorted(domains)),
             ephemeral=True,
         )
 
+    # -- Honeypot ------------------------------------------------------------
+    honeypot_group = app_commands.Group(
+        name="honeypot",
+        description="Manage the scam-bot honeypot (bait) channel",
+        default_permissions=discord.Permissions(administrator=True),
+    )
+
+    @honeypot_group.command(name="set", description="Set the honeypot (bait) channel")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(channel="The channel to use as the bait/honeypot")
+    async def honeypot_set(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
+            )
+            return
+        self.bot.guild_settings.set_honeypot_channel(interaction.guild.id, channel.id)
+        await interaction.response.send_message(
+            f"Understood. I will keep my watch upon {channel.mention} as the trap from now on — "
+            f"anyone who brings scam links or images there will be seen out at once, and I will "
+            f"leave every other channel in peace.",
+            ephemeral=True,
+        )
+
+    @honeypot_group.command(name="off", description="Disable the honeypot and resume normal moderation")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def honeypot_off(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
+            )
+            return
+        self.bot.guild_settings.set_honeypot_channel(interaction.guild.id, 0)
+        await interaction.response.send_message(
+            "The trap has been set aside. Do be aware: I will now watch over **all** channels "
+            "again, so I may err a little more easily — please forgive me if I do.",
+            ephemeral=True,
+        )
+
+    @honeypot_group.command(name="status", description="Show the current honeypot channel")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def honeypot_status(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
+            )
+            return
+        gid = self.bot.guild_settings.get_honeypot_channel(interaction.guild.id)
+        if gid is None:
+            gid = getattr(self.bot.config, "HONEYPOT_CHANNEL_ID", 0)
+        if gid:
+            await interaction.response.send_message(
+                f"My watch is set upon <#{gid}>. I am tending to that channel alone for now.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                "No trap is set just now — I am watching over every channel as usual.",
+                ephemeral=True,
+            )
+
+    # -- Log channel ---------------------------------------------------------
+    logchannel_group = app_commands.Group(
+        name="logchannel",
+        description="Choose where Mari sends her moderation logs",
+        default_permissions=discord.Permissions(administrator=True),
+    )
+
+    @logchannel_group.command(name="set", description="Set the channel for moderation logs")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(channel="The channel to send moderation logs to")
+    async def logchannel_set(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
+            )
+            return
+        self.bot.guild_settings.set_log_channel(interaction.guild.id, channel.id)
+        await interaction.response.send_message(
+            f"Understood. From now on I will quietly bring all my notices to {channel.mention}.",
+            ephemeral=True,
+        )
+
+    @logchannel_group.command(name="off", description="Stop using a dedicated log channel")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def logchannel_off(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
+            )
+            return
+        self.bot.guild_settings.set_log_channel(interaction.guild.id, 0)
+        await interaction.response.send_message(
+            "Understood. I will keep no separate log channel now — my notices will appear "
+            "wherever each matter arises instead.",
+            ephemeral=True,
+        )
+
+    @logchannel_group.command(name="status", description="Show the current log channel")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def logchannel_status(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
+            )
+            return
+        cid = self.bot.guild_settings.get_log_channel(interaction.guild.id)
+        if cid is None:
+            cid = getattr(self.bot.config, "LOG_CHANNEL_ID", 0)
+        if cid:
+            await interaction.response.send_message(
+                f"I am bringing my notices to <#{cid}> at present.", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "I keep no separate log channel just now; my notices appear wherever each matter arises.",
+                ephemeral=True,
+            )
+
     # -- Ban / Unban ---------------------------------------------------------
     @app_commands.command(name="ban", description="Remove a member from this server")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(user="The member to remove", reason="Reason for the removal")
     async def ban(
@@ -476,13 +546,13 @@ class AdminCommands(commands.Cog):
     ):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         if user.top_role >= interaction.guild.me.top_role:
             await interaction.response.send_message(
-                "I'm afraid I am unable to take action against this member. "
-                "Their role stands above mine, and I must respect that boundary.",
+                "I am afraid I cannot act against this member. "
+                "Their standing is above my own, and I must honour that.",
                 ephemeral=True,
             )
             return
@@ -490,27 +560,28 @@ class AdminCommands(commands.Cog):
             await user.ban(reason=f"[Manual] {reason}")
             self.bot.guild_settings.record_violation(interaction.guild.id, user.id, reason=reason)
             await interaction.response.send_message(
-                f"**{user}** has been removed from the server.\nReason: `{reason}`\n"
-                f"I hope this helps maintain peace here."
+                f"I have seen **{user}** out of the server.\nReason: `{reason}`\n"
+                f"I take no joy in it, but I hope peace may be kept here."
             )
         except discord.Forbidden:
             await interaction.response.send_message(
-                "I apologize, but I do not have the necessary permissions to carry out this action.",
+                "Forgive me — I have not been given the permissions I would need for this.",
                 ephemeral=True,
             )
         except Exception as e:
             await interaction.response.send_message(
-                f"Something went wrong and I was unable to complete the action. I'm sorry. `({e})`",
+                f"Something went amiss and I could not see it through. I am sorry. `({e})`",
                 ephemeral=True,
             )
 
     @app_commands.command(name="unban", description="Lift a ban by Discord user ID")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(user_id="The Discord user ID to unban")
     async def unban(self, interaction: discord.Interaction, user_id: str):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         try:
@@ -518,47 +589,48 @@ class AdminCommands(commands.Cog):
             user = await self.bot.fetch_user(uid)
             await interaction.guild.unban(user)
             await interaction.response.send_message(
-                f"The ban on **{user}** has been lifted. I hope they use this second chance well."
+                f"I have lifted the ban on **{user}**. May they make good use of this second chance."
             )
         except ValueError:
             await interaction.response.send_message(
-                "I'm sorry, but that does not appear to be a valid user ID. "
-                "Could you double-check and try again?",
+                "I am sorry, but that does not look like a valid user ID. "
+                "Might you check it and try once more?",
                 ephemeral=True,
             )
         except discord.NotFound:
             await interaction.response.send_message(
-                "I could not find a banned member with that ID. "
-                "They may have already been unbanned.",
+                "I could find no banned soul with that ID. "
+                "Perhaps the ban has already been lifted.",
                 ephemeral=True,
             )
         except Exception as e:
             await interaction.response.send_message(
-                f"I was unable to lift the ban. I apologize for the trouble. `({e})`",
+                f"I was unable to lift the ban. Please forgive the trouble. `({e})`",
                 ephemeral=True,
             )
 
     # -- Violation history ---------------------------------------------------
     @app_commands.command(name="history", description="Review a member's past violations")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(user="The member to look up")
     async def history(self, interaction: discord.Interaction, user: discord.Member):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         records = self.bot.guild_settings.get_violations(interaction.guild.id, user.id)
         if not records:
             await interaction.response.send_message(
-                f"I have found no recorded violations for **{user}**. "
-                f"It seems they have been conducting themselves well.",
+                f"I have noted no wrongdoing for **{user}**. "
+                f"It seems they have conducted themselves well.",
                 ephemeral=True,
             )
             return
         embed = discord.Embed(
             title=f"Violation History — {user}",
-            description="Below is a record of past incidents I have noted.",
+            description="Here is what I have gently noted of past incidents.",
             color=discord.Color.orange(),
         )
         for i, record in enumerate(records[-10:], 1):
@@ -571,41 +643,43 @@ class AdminCommands(commands.Cog):
 
     # -- Threshold -----------------------------------------------------------
     @app_commands.command(name="threshold", description="Adjust the detection sensitivity (0.0-1.0)")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(value="A value between 0.0 and 1.0 (default: 0.5)")
     async def threshold(self, interaction: discord.Interaction, value: float):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         if not (0.0 <= value <= 1.0):
             await interaction.response.send_message(
-                "I'm sorry, but the value must be between `0.0` and `1.0`. "
-                "Could you try again with a valid number?",
+                "I am sorry, but the value must rest between `0.0` and `1.0`. "
+                "Might you try again with a number in that range?",
                 ephemeral=True,
             )
             return
         self.bot.guild_settings.set_threshold(interaction.guild.id, value)
         await interaction.response.send_message(
-            f"Understood. I have adjusted my detection sensitivity to `{value:.2f}`. "
-            f"I will now flag links with a risk probability of {value:.0%} or higher.",
+            f"Understood. I have set my watchfulness to `{value:.2f}` — I will now flag links "
+            f"I judge {value:.0%} or more likely to bring harm.",
             ephemeral=True,
         )
 
     # -- Stats ---------------------------------------------------------------
     @app_commands.command(name="stats", description="View this server's protection summary")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
     async def stats(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message(
-                "I apologize, but this command can only be used within a server.", ephemeral=True
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
             )
             return
         s = self.bot.guild_settings.get_stats(interaction.guild.id)
         embed = discord.Embed(
             title=f"Protection Summary — {interaction.guild.name}",
-            description="Here is a summary of everything I have been doing to keep this server safe.",
+            description="Here is a humble account of all I have done to keep this place safe.",
             color=discord.Color.blurple(),
         )
         embed.add_field(name="Links Inspected", value=str(s.get("urls_scanned", 0)), inline=True)
@@ -614,22 +688,64 @@ class AdminCommands(commands.Cog):
         embed.add_field(name="Warnings Issued", value=str(s.get("warnings", 0)), inline=True)
         embed.add_field(name="Detection Sensitivity", value=f"`{s.get('threshold', 0.5):.2f}`", inline=True)
         embed.add_field(name="Trusted Domains", value=str(s.get("whitelist_count", 0)), inline=True)
-        embed.set_footer(text="I will continue doing my best to protect everyone here.")
+        embed.set_footer(text="I will keep watching over everyone here, with all my heart.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # -- Scam catch log ------------------------------------------------------
+    @app_commands.command(name="scamlog", description="Show successful scam catches (evidence log)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def scamlog(self, interaction: discord.Interaction):
+        path = Path(__file__).resolve().parent.parent / "log" / "scam_catches.csv"
+        if not path.exists() or path.stat().st_size == 0:
+            await interaction.response.send_message(
+                "I have caught no scams just yet — may it stay that way.", ephemeral=True
+            )
+            return
+        try:
+            with path.open("r", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+        except Exception as e:
+            await interaction.response.send_message(
+                f"I am sorry, I could not read the record. `({e})`", ephemeral=True
+            )
+            return
+
+        total = len(rows)
+        recent = rows[-10:][::-1]
+        embed = discord.Embed(
+            title="Scam Catches",
+            description=f"I have caught and seen out **{total}** scam{'s' if total != 1 else ''} so far.",
+            color=discord.Color.green(),
+        )
+        for r in recent:
+            detail = (r.get("detail") or "")[:120]
+            embed.add_field(
+                name=f"{r.get('timestamp_utc', '?')} UTC — {r.get('category', '?')}",
+                value=f"User: `{r.get('user', '?')}`\n`{detail}`",
+                inline=False,
+            )
+        embed.set_footer(text=f"Showing the last {len(recent)} of {total} — the full record is attached.")
+        await interaction.response.send_message(embed=embed, file=discord.File(str(path)))
 
     # -- Global error handler ------------------------------------------------
     async def cog_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ):
-        if isinstance(error, app_commands.MissingPermissions):
+        if isinstance(error, app_commands.CommandOnCooldown):
             msg = (
-                "I'm sorry, but it seems you do not have the necessary permissions for this. "
-                "Please speak with a server administrator if you believe this is a mistake."
+                f"Please allow me a brief moment to catch my breath — "
+                f"do try again in {error.retry_after:.0f}s."
+            )
+        elif isinstance(error, app_commands.MissingPermissions):
+            msg = (
+                "I am sorry, but it seems you do not have the standing for this. "
+                "Please speak with an administrator if you believe this is a mistake."
             )
         else:
             msg = (
-                f"Something unexpected happened and I was unable to complete your request. "
-                f"I sincerely apologize. `({error})`"
+                f"Something unexpected happened, and I could not see your request through. "
+                f"I am truly sorry. `({error})`"
             )
 
         try:

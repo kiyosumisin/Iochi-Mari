@@ -1,427 +1,243 @@
-# Mari Discord Bot
+# Mari — Discord Anti-Scam Bot
 
-Mari is a powerful Discord moderation bot that automatically detects and handles malicious, phishing, scam, adult, and gambling URLs using a combination of heuristics, external threat intelligence, AI-based classification, and image analysis.
+Mari is a Discord moderation bot that automatically detects and acts on malicious,
+phishing, scam, adult and gambling content — using heuristics, an AI URL classifier,
+external threat intelligence, web-page analysis and image OCR.
+
+It is themed after **Iochi Mari** from *Blue Archive* (a gentle Sister of Trinity's
+Sisterhood), so all of the bot's messages speak in her calm, caring voice.
+
+---
 
 ## Features
 
-- **URL Analysis**: Automated extraction and evaluation of URLs in messages.
-- **Heuristic Scanning**: Fast, pattern-based detection for phishing and scam indicators.
-- **External Scanners**: Integrates with Google Safe Browsing, VirusTotal, and URLScan for threat intelligence.
-- **AI Classification**: Machine learning model for advanced URL threat detection.
-- **Image Analysis**: OCR-based text extraction from images to detect scam content.
-- **Content Scanning**: Deep analysis of web page content for malicious patterns.
-- **Guild Management**: Per-server (guild) settings and configuration.
-- **Whitelist/Blacklist**: Custom management of trusted and blocked URLs.
-- **User Warnings**: Tracks and manages user violations.
-- **Structured Logging**: Comprehensive logging for moderation and debugging.
+- **URL scanning** — every link in a message is evaluated through several layers:
+  heuristics, an AI (LightGBM) classifier, web-page content analysis, and external
+  scanners (Google Safe Browsing, VirusTotal).
+- **Image OCR** — extracts text from attached images (Tesseract) and flags scam content.
+- **Honeypot channel** — a bait channel where real members are told not to post; any
+  scam link/image there is banned instantly, while the bot leaves every other channel
+  alone (near-zero false positives).
+- **Auto-moderation** — deletes offending messages and bans/timeouts the author.
+- **Per-guild configuration via slash commands** — channels, whitelist and sensitivity
+  are all set in Discord; no need to edit files per server.
+- **Evidence log** — every successful catch is recorded to `log/scam_catches.csv` and
+  viewable with `/scamlog`.
+- **Permission-aware** — admin commands are hidden from normal members.
 
-## Project Structure
+---
+
+## How it works
+
+For each link, `core/url_evaluator.py` runs (in order): cache check → short-URL
+resolution → whitelist/blacklist → heuristic scan → AI classifier → (in parallel)
+content scan + Google Safe Browsing + VirusTotal. The strongest verdict wins:
+`malware`/`phishing` > `adult`/`gambling`/`scam` > `safe`.
+
+Actions taken:
+
+| Verdict | Action |
+|---|---|
+| malware / phishing / scam | delete message + ban |
+| adult / gambling | delete + escalating timeout (warn 1–5, then ban) |
+| scam image (OCR) | delete + ban |
+
+When a **honeypot channel** is set, the bot moderates **only** that channel: a scam
+link/image → instant ban; an accidental benign post → delete + warning, with a ban
+after the warning limit is exceeded. Admins are never punished there.
+
+All moderation notices go to the configured **log channel** (`/logchannel`), keeping
+public channels clean.
+
+---
+
+## Project structure
 
 ```
 .
-├── ai/                  # AI/ML components (feature extraction, model, training, utils)
-├── bot/                 # Discord bot implementation (main class, commands, events)
-├── core/                # Core logic (config, scanners, evaluators, utilities)
-├── data/                # Persistent data (whitelist, blacklist, guild settings, warnings)
-├── log/                 # Log files
+├── bot/                 # Discord layer: bot class, slash commands, message handler
+│   ├── mari_bot.py
+│   ├── commands.py
+│   └── events.py
+├── core/                # Scanning engine: config, evaluator, scanners, guild settings
+├── ai/                  # ML pipeline: feature extractor, train, predict, model.pkl
+├── data/                # whitelist / blacklist / guild_settings / warnings (JSON)
+├── log/                 # Log files + scam_catches.csv
 ├── run.py               # Bot entry point
-├── requirements.txt      # Python dependencies
+├── app.py               # Optional FastAPI service (URL prediction + feedback/retrain)
+├── requirements.txt
 └── README.md
 ```
 
+---
+
 ## Prerequisites
 
-- Python 3.8+
-- Discord bot token
-- (Optional) API keys for:
-  - Google Safe Browsing
-  - VirusTotal
-  - URLScan
-- (Optional) Tesseract OCR for image analysis
+- **Python 3.10+** (developed on 3.12)
+- **Tesseract-OCR** installed on the host (for image scanning):
+  - Windows: <https://github.com/UB-Mannheim/tesseract/wiki> (auto-detected at the
+    default path, or set `TESSERACT_CMD`)
+  - macOS: `brew install tesseract`
+  - Linux: `sudo apt-get install tesseract-ocr`
+  - For Vietnamese OCR also install the `vie` language data and set `OCR_LANG=vie+eng`.
+- A **Discord bot application** (token + privileged intents — see below)
+
+---
 
 ## Installation
 
-1. Clone or download this repository.
-2. Create a virtual environment (recommended):
-   ```bash
-   python -m venv venv
-   # Windows
-   venv\Scripts\activate
-   # macOS/Linux
-   source venv/bin/activate
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Create a `.env` file in the root directory:
-   ```
-   DISCORD_TOKEN=your_discord_bot_token
-   GOOGLE_API_KEY=your_google_api_key
-   VIRUSTOTAL_API_KEY=your_virustotal_api_key
-   URLSCAN_API_KEY=your_urlscan_api_key
-   ADMIN_ROLE_ID=your_admin_role_id
-   GUILD_ID=your_guild_id
-   ADULT_CHANNEL_IDS=channel_id_1,channel_id_2
-   ```
-
-## Usage
-
-### Run the Bot
-
 ```bash
+# 1. (recommended) virtual environment
+python -m venv venv
+venv\Scripts\activate            # Windows
+source venv/bin/activate          # macOS/Linux
+
+# 2. dependencies
+pip install -r requirements.txt
+
+# 3. create .env (see Configuration), then run
 python run.py
 ```
 
-The bot will start and listen for messages in your Discord server.
+---
 
-### Train the AI Model
+## Discord setup
 
-```bash
-python ai/train.py
-```
-This will create or update the model at `ai/model.pkl` using training data in `ai/data/urls.csv`.
+1. **Privileged Gateway Intents** — in the Developer Portal → *Bot*, enable
+   **Message Content Intent** and **Server Members Intent** (the bot will not start
+   without them).
+2. **Invite** the bot with both scopes `bot` and `applications.commands`. Grant only
+   the permissions it needs (do **not** grant Administrator to the bot):
+   View Channels, Send Messages, Embed Links, Attach Files, Read Message History,
+   Manage Messages, Ban Members, Moderate Members.
+3. **Role position** — drag the bot's role above the members it should be able to
+   ban/timeout.
 
-### Run Tests
-
-```bash
-python -m pytest test/
-```
-Or run individual test files as needed.
-
-## Image Analysis (OCR)
-
-To enable image scam detection, install Tesseract OCR:
-
-- **Windows**: Download from https://github.com/UB-Mannheim/tesseract/wiki and install. Update `.env` with the Tesseract path if needed.
-- **macOS**: `brew install tesseract`
-- **Linux**: `sudo apt-get install tesseract-ocr`
-
-To disable OCR if Tesseract is not available, set in `.env`:
-```
-OCR_ENABLED=false
-```
+---
 
 ## Configuration
 
-### Environment Variables
+Only `DISCORD_TOKEN` is required. Everything else has safe defaults, and channels are
+best configured with the slash commands below (stored per server).
 
-- `DISCORD_TOKEN` (required): Your Discord bot token
-- `GOOGLE_API_KEY`, `VIRUSTOTAL_API_KEY`, `URLSCAN_API_KEY` (optional): API keys for external scanners
-- `ADMIN_ROLE_ID`, `GUILD_ID`, `ADULT_CHANNEL_IDS` (optional): Admin and server settings
-- `OCR_ENABLED` (optional, default: true): Enable/disable image OCR
-- `AI_THRESHOLD`, `AI_SCAM_THRESHOLD` (optional): Model thresholds
-- `AI_MODEL_PATH` (optional): Custom model path
+### `.env`
 
-### Data Files
+```
+DISCORD_TOKEN=your_discord_bot_token
+GOOGLE_API_KEY=your_key        # optional — enables Google Safe Browsing
+VIRUSTOTAL_API_KEY=your_key    # optional — enables VirusTotal
+```
 
-- `data/blacklist.json`: Blocked URLs
-- `data/whitelist.json`: Trusted URLs
-- `data/guild_settings.json`: Per-guild settings
-- `data/warnings.json`: User warnings
+### Optional tuning (environment variables)
 
-## Architecture
+| Variable | Default | Purpose |
+|---|---|---|
+| `GUILD_ID` | `0` | `0` = global slash-command sync (all servers, ~1h to appear). Set a server ID for instant single-guild sync (dev). |
+| `OCR_ENABLED` | `true` | Turn image OCR on/off |
+| `OCR_LANG` | `eng` | Tesseract language(s), e.g. `vie+eng` |
+| `TESSERACT_CMD` | auto | Path to the `tesseract` binary |
+| `AI_THRESHOLD` | model | Decision threshold for the AI classifier |
+| `AI_SCAM_THRESHOLD` | `0.3` | Lower bound to tag a borderline URL as `scam` |
+| `AI_OVERRIDE_THRESHOLD` | `0.9` | AI may override an adult/gambling verdict above this probability |
+| `AI_ENABLE_SHAP` | `false` | Build SHAP explanations (heavy; only needed for `app.py`) |
+| `AI_MODEL_PATH` | `ai/model.pkl` | Custom model path |
+| `TIMEOUT_DURATIONS` | `10m,1h,6h,1d,3d` | Escalating timeout ladder for adult/gambling |
+| `HONEYPOT_WARN_LIMIT` | `3` | Honeypot warnings before a ban |
 
-- **URL Evaluator**: Orchestrates the full URL evaluation pipeline.
-- **Heuristic Scanner**: Fast, pattern-based detection.
-- **External Scanners**: Integrates with Google Safe Browsing, VirusTotal, URLScan.
-- **Content Scanner**: Analyzes web page content for threats.
-- **Image Scanner**: OCR-based image text analysis.
-- **AI Model**: Machine learning for threat classification.
-- **Discord Bot**: Handles events, commands, and moderation.
+`LOG_CHANNEL_ID`, `HONEYPOT_CHANNEL_ID` and `ADULT_CHANNEL_IDS` also exist as env
+fallbacks, but prefer the per-server slash commands — they work correctly across
+multiple servers.
 
-## Logging
+### Data files
 
-Logs are stored in the `log/` directory. Check logs for analysis results, errors, and moderation actions.
+- `data/whitelist.json` — trusted domains (skipped)
+- `data/blacklist.json` — always-blocked domains
+- `data/guild_settings.json` — per-guild config, violations, stats
+- `data/warnings.json` — warning counters
+
+---
+
+## Commands
+
+### Everyone
+
+| Command | Description |
+|---|---|
+| `/check <url>` | Inspect a link (result is private to you) |
+| `/help` | List available commands |
+| `!ping` | Check the bot is alive |
+
+### Admin only (require **Administrator**; hidden from other members)
+
+| Command | Description |
+|---|---|
+| `/purge <amount> [filter] [user] [text]` | Delete up to 1000 messages, optionally filtered (`any`, `user`, `match`, `not`, `startswith`, `endswith`, `links`, `invites`, `images`, `embeds`, `mentions`, `bots`, `humans`) |
+| `/ban <user> [reason]` / `/unban <user_id>` | Remove / restore a member |
+| `/history <user>` | Review a member's recorded violations |
+| `/threshold <0.0-1.0>` | Adjust detection sensitivity (per server) |
+| `/stats` | Server protection summary |
+| `/scamlog` | Show successful scam catches + attach the evidence CSV |
+| `/honeypot set #channel \| off \| status` | Manage the bait channel |
+| `/logchannel set #channel \| off \| status` | Choose where moderation logs are sent |
+| `/adultchannel add \| remove \| list \| clear` | Channels where adult content is allowed |
+| `/whitelist add \| remove \| list` | Trusted domains that skip scanning |
+
+Admin commands are hidden from the slash menu via Discord `default_permissions`
+(Administrator) and re-checked at runtime. Server owners can still delegate individual
+commands to specific roles in **Server Settings → Integrations**.
+
+---
+
+## AI model
+
+The trained model ships at `ai/model.pkl`. To retrain from `ai/data/urls.csv`:
+
+```bash
+python -m ai.train            # URL features only (fast)
+python -m ai.train --with-page   # also fetch live page features (slower)
+```
+
+The bot itself only uses the probability/verdict, so SHAP explainability is **off by
+default**. Enable it (e.g. for `app.py`) with `AI_ENABLE_SHAP=true`.
+
+---
+
+## Optional API service (`app.py`)
+
+A standalone FastAPI service exposing `POST /predict`, `POST /feedback`,
+`POST /feedback/retrain` and `GET /health`:
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1
+```
+
+Set `AI_ENABLE_SHAP=true` if you want SHAP explanations in the `/predict` response.
+
+---
+
+## Hosting
+
+The bot needs to run continuously. Run it on a small always-on host (a cheap VPS, a
+free student cloud credit, or a spare machine) with a process manager
+(systemd / Docker `--restart unless-stopped`). Remember to install Tesseract on the
+host and set environment variables there. `.env` is git-ignored and must be recreated
+on the server.
+
+---
 
 ## Troubleshooting
 
-- **Bot not responding**: Check `DISCORD_TOKEN`, permissions, and logs.
-- **URLs not detected**: Ensure message content intent is enabled, check whitelist, review heuristics.
-- **AI model issues**: Retrain with more data, adjust thresholds.
-- **OCR not working**: Verify Tesseract installation, set `OCR_ENABLED=false` if needed.
-
-## Guild Settings
-
-Manage adult channels with slash commands (requires Manage Server permission):
-
-- `/adultchannel add #channel`
-- `/adultchannel remove #channel`
-- `/adultchannel list`
-- `/adultchannel clear`
-
-Settings are stored in `data/guild_settings.json`.
-
-## Whitelist / Blacklist
-
-Add trusted domains to `data/whitelist.json` and blocked domains to `data/blacklist.json`.
-
-Example:
-```
-[
-  "facebook.com",
-  "youtube.com"
-]
-```
-
-## License
-
-MIT
-
-### Prerequisites
-
-- Python 3.8+
-- Discord bot token
-- (Optional) API keys for external scanners:
-  - Google Safe Browsing API key
-  - VirusTotal API key
-  - URLScan API key
-- (Optional) Tesseract OCR for image scanning
-
-### Installation
-
-1. Clone or download the project
-
-2. Create a virtual environment (recommended):
-   ```bash
-   python -m venv venv
-   # On Windows
-   venv\Scripts\activate
-   # On macOS/Linux
-   source venv/bin/activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Create a `.env` file in the root directory:
-   ```
-   DISCORD_TOKEN=your_discord_bot_token
-   GOOGLE_API_KEY=your_google_api_key
-   VIRUSTOTAL_API_KEY=your_virustotal_api_key
-   URLSCAN_API_KEY=your_urlscan_api_key
-   ADMIN_ROLE_ID=your_admin_role_id
-   GUILD_ID=your_guild_id
-   ADULT_CHANNEL_IDS=channel_id_1,channel_id_2
-   ```
-
-## Usage
-
-### Run the Bot
-
-```bash
-python run.py
-```
-
-The bot will start and begin listening for messages in your Discord server.
-
-### Train AI Model
-
-To train or retrain the AI model:
-
-## Usage
-
-### Run the Bot
-
-```bash
-python run.py
-```
-
-The bot will start and begin listening for messages in your Discord server.
-
-### Train AI Model
-
-To train or retrain the AI model:
-
-```bash
-python ai/train.py
-```
-
-This will create/update the model at `ai/model.pkl` using the training data in `ai/data/urls.csv`.
-
-### Run Tests
-
-```bash
-python -m pytest test/
-```
-
-Or run individual test files:
-```bash
-python test/test_evaluator.py
-python test/test_heuristic.py
-python test/test_utils.py
-```
-
-## Image Analysis (OCR)
-
-The bot can analyze images for scam/phishing text using Tesseract OCR. Optional feature.
-
-### Windows Installation
-
-1. Download Tesseract installer from: https://github.com/UB-Mannheim/tesseract/wiki
-
-2. Install Tesseract (default or custom path)
-
-3. Update `.env` with Tesseract path if needed (or it will use the default installation path)
-
-### macOS Installation
-
-```bash
-brew install tesseract
-```
-
-### Linux Installation
-
-```bash
-sudo apt-get install tesseract-ocr
-```
-
-### Optional Configuration
-
-Disable OCR if Tesseract is not installed:
-
-```
-OCR_ENABLED=false
-```
-
-## Configuration
-
-### Environment Variables
-
-- `DISCORD_TOKEN` (required): Your Discord bot token
-- `GOOGLE_API_KEY` (optional): Google Safe Browsing API key
-- `VIRUSTOTAL_API_KEY` (optional): VirusTotal API key
-- `URLSCAN_API_KEY` (optional): URLScan API key
-- `ADMIN_ROLE_ID` (optional): Discord role ID for admin commands
-- `GUILD_ID` (optional): Discord server ID for bot
-- `ADULT_CHANNEL_IDS` (optional): Comma-separated channel IDs where adult content is allowed
-- `OCR_ENABLED` (optional, default: true): Enable/disable image OCR scanning
-- `AI_THRESHOLD` (optional, default: 0.5): Confidence threshold for AI model to flag a URL as malicious
-- `AI_SCAM_THRESHOLD` (optional, default: 0.3): Lower threshold for scam classification
-- `AI_MODEL_PATH` (optional): Custom path to the trained model file
-
-### Data Files
-
-- `data/blacklist.json`: Manually blacklisted URLs
-- `data/whitelist.json`: Whitelisted URLs (trusted domains)
-- `data/guild_settings.json`: Per-guild configuration and preferences
-- `data/warnings.json`: Track user warning history
-
-## Architecture
-
-### Core Components
-
-**URL Evaluator** (`core/url_evaluator.py`)
-- Orchestrates the complete URL evaluation pipeline
-- Combines results from multiple scanners
-- Returns a final verdict on URL safety
-
-**Heuristic Scanner** (`core/heuristic_scanner.py`)
-- Quick pattern-based detection
-- Identifies common phishing/scam indicators in URLs and content
-- Low false positive rate
-
-**External Scanners** (`core/external_scanners.py`)
-- Google Safe Browsing API integration
-- VirusTotal API integration
-- URLScan integration
-- Provides community-based threat intelligence
-
-**Content Scanner** (`core/content_scanner.py`)
-- Analyzes page content for malicious patterns
-- Detects phishing/scam signals in HTML/text
-- Works in conjunction with external scanners
-
-**Image Scanner** (`core/image_scanner.py`)
-- Extracts text from images using OCR
-- Analyzes extracted text for threats
-- Supports various image formats
-
-**AI Model** (`ai/predict.py`)
-- Machine learning model for threat classification
-- Trained on labeled URL datasets
-- Provides probability scores for different threat categories
-
-### Bot Components
-
-**Discord Bot** (`bot/mari_bot.py`)
-- Main bot client and lifecycle management
-- Event loop orchestration
-
-**Commands** (`bot/commands.py`)
-- Implementation of Discord slash commands
-- Admin and user-facing commands
-
-**Events** (`bot/events.py`)
-- Message event handlers
-- Automatic URL scanning in messages
-- User warning tracking
-
-## Logging
-
-Bot logs are stored in the `log/` directory. Check logs for:
-- URL analysis results
-- API errors and retries
-- Bot lifecycle events
-- Moderation actions taken
-
-## Troubleshooting
-
-### Bot doesn't respond
-- Verify `DISCORD_TOKEN` is correct in `.env`
-- Ensure bot has proper Discord permissions (read messages, send messages, manage messages)
-- Check `log/` directory for error messages
-
-### URLs not being detected
-- Verify message content intent is enabled in Discord Developer Portal
-- Check that the URL is not already in whitelist
-- Review heuristics in `core/heuristic_scanner.py`
-
-### AI model accuracy issues
-- Retrain the model: `python ai/train.py`
-- Ensure `ai/data/urls.csv` has sufficient training data
-- Adjust thresholds in `.env` if needed
-
-### Image OCR not working
-- Verify Tesseract is installed and in PATH
-- Try setting `OCR_ENABLED=false` if Tesseract unavailable
-- Check Tesseract installation on your system
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
-- `AI_MALICIOUS_LABEL` (default 0): which label is malicious in your dataset
-
-## Whitelist / Blacklist
-
-Add trusted domains to `data/whitelist.json` and blocked domains to `data/blacklist.json`.
-
-Example:
-
-```
-[
-  "facebook.com",
-  "youtube.com"
-]
-```
-
-## Notes
-
-- `log/mari.log` stores all bot logs.
-- The bot needs permissions to delete messages and ban users.
-
-## Guild Settings (per server)
-
-Slash commands (Manage Server permission required):
-
-- `/adultchannel add #channel`
-- `/adultchannel remove #channel`
-- `/adultchannel list`
-- `/adultchannel clear`
-
-These settings are stored in `data/guild_settings.json`.
+- **Bot offline** — check the token in `.env`, that both privileged intents are
+  enabled, and `log/mari.log` for a startup traceback.
+- **Slash commands missing** — the bot must be invited with the `applications.commands`
+  scope; with `GUILD_ID=0` (global) they take up to ~1h to appear.
+- **Can't ban a member** — the bot's role must sit above that member's highest role,
+  and it needs the Ban Members permission.
+- **OCR reads nothing** — verify Tesseract is installed (and the `vie` data for
+  Vietnamese), or set `OCR_ENABLED=false`.
+- **Notices appear in the public channel** — set a log channel with `/logchannel set`.
+
+---
 
 ## License
 

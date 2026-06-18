@@ -1,4 +1,5 @@
 import os
+import csv
 import json
 from pathlib import Path
 from datetime import timedelta, datetime, timezone
@@ -158,14 +159,45 @@ class MessageHandler:
         if guild and self.guild_settings:
             self.guild_settings.record_violation(guild.id, user_id, url=url, reason=reason)
 
+    def _log_catch(self, guild, author, category: str, detail: str, channel):
+        """Append a successful scam catch to log/scam_catches.csv (evidence trail)."""
+        try:
+            log_dir = Path(__file__).resolve().parent.parent / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            path = log_dir / "scam_catches.csv"
+            new = not path.exists() or path.stat().st_size == 0
+            with path.open("a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow([
+                        "timestamp_utc", "server", "channel",
+                        "user", "user_id", "category", "detail", "action",
+                    ])
+                w.writerow([
+                    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                    getattr(guild, "name", "") or "",
+                    getattr(channel, "name", "") or "",
+                    str(author),
+                    getattr(author, "id", ""),
+                    category,
+                    (detail or "")[:300].replace("\n", " ").replace("\r", " "),
+                    "banned",
+                ])
+        except Exception as exc:
+            logger.warning("Could not write scam catch log: %s", exc)
+
     # ------------------------------------------------------------------
     # Helpers for scam image action
     # ------------------------------------------------------------------
     def _get_log_channel(self, guild: discord.Guild):
-        """Trả về log channel nếu config có LOG_CHANNEL_ID."""
-        log_channel_id = getattr(self.config, "LOG_CHANNEL_ID", 0)
-        if log_channel_id:
-            return guild.get_channel(int(log_channel_id))
+        """Resolve the log channel: per-guild setting wins, else env LOG_CHANNEL_ID."""
+        cid = None
+        if guild and self.guild_settings:
+            cid = self.guild_settings.get_log_channel(guild.id)
+        if cid is None:
+            cid = int(getattr(self.config, "LOG_CHANNEL_ID", 0) or 0)
+        if cid:
+            return guild.get_channel(int(cid))
         return None
 
     async def _notify(self, guild, fallback_channel, text):
@@ -229,6 +261,7 @@ class MessageHandler:
             banned = True
             self._stat(guild, "auto_bans")
             self._record(guild, author.id, reason=f"Scam image ({verdict}) | file={filename}")
+            self._log_catch(guild, author, f"image:{verdict}", f"{filename} | {ocr_text[:120]}", channel)
             logger.info("Banned user %s (ID: %s) for scam image.", author, author.id)
         except discord.Forbidden:
             logger.error("No permission to ban %s.", author)
@@ -239,9 +272,9 @@ class MessageHandler:
         try:
             action = "Message removed. User banned." if banned else "Message removed."
             alert = (
-                f"**Scam image detected** from **{author}** — Verdict: `{verdict}`\n"
+                f"**I have found a scam image** from **{author}** — Verdict: `{verdict}`\n"
                 f"Image: `{filename}`\n"
-                f"{action}"
+                f"{action}\nPlease watch over yourselves, everyone."
             )
             await self._notify(guild, channel, alert)
         except Exception as exc:
@@ -281,8 +314,16 @@ class MessageHandler:
             (".png", ".jpg", ".jpeg", ".webp", ".bmp")
         )
 
+    def _honeypot_channel_id(self, guild) -> int:
+        """Resolve the active honeypot channel: per-guild setting wins, else env."""
+        if guild and self.guild_settings:
+            gid = self.guild_settings.get_honeypot_channel(guild.id)
+            if gid is not None:
+                return gid
+        return int(getattr(self.config, "HONEYPOT_CHANNEL_ID", 0) or 0)
+
     async def _honeypot_detect_scam(self, message):
-        """Return (True, detail) if the message carries a scam link or image."""
+        """Return (True, category, detail) if the message carries a scam link/image."""
         guild = message.guild
         guild_threshold = (
             self.guild_settings.get_threshold(guild.id)
@@ -292,7 +333,7 @@ class MessageHandler:
         for url in URLUtils.extract_urls(message.content or ""):
             verdict = await self.evaluator.evaluate(url, threshold=guild_threshold)
             if verdict not in ("safe", "none"):
-                return True, f"link:{verdict}"
+                return True, f"link:{verdict}", url
 
         ocr_enabled = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
         if ocr_enabled:
@@ -309,15 +350,15 @@ class MessageHandler:
                             verdict=verdict,
                         )
                         if verdict in ("scam", "suspected"):
-                            return True, f"image:{verdict}"
+                            return True, f"image:{verdict}", att.filename
                 except Exception as exc:
                     logger.warning(
                         "Honeypot OCR failed | attachment=%s | error=%s",
                         att.filename, exc,
                     )
-        return False, ""
+        return False, "", ""
 
-    async def _honeypot_ban(self, message, reason: str, already_deleted: bool = False):
+    async def _honeypot_ban(self, message, reason: str, already_deleted: bool = False, catch=None):
         guild = message.guild
         author = message.author
         if not already_deleted:
@@ -335,6 +376,8 @@ class MessageHandler:
                 self._stat(guild, "auto_bans")
                 self._record(guild, author.id, reason=reason)
                 self._reset_honeypot_warn(author.id)
+                if catch:
+                    self._log_catch(guild, author, catch[0], catch[1], message.channel)
                 logger.info("Honeypot banned %s (ID: %s) | %s", author, author.id, reason)
             except discord.Forbidden:
                 logger.error("Honeypot: no permission to ban %s", author)
@@ -344,7 +387,8 @@ class MessageHandler:
         action = "Message removed. User banned." if banned else "Message removed."
         await self._notify(
             guild, message.channel,
-            f"**Honeypot triggered** — **{author}**\nReason: `{reason}`\n{action}",
+            f"**Someone slipped into the trap.** I found **{author}** where no honest member should wander.\n"
+            f"Reason: `{reason}`\n{action}\nPlease rest easy, everyone — I am keeping watch over this place.",
         )
 
     async def _handle_honeypot(self, message):
@@ -362,9 +406,13 @@ class MessageHandler:
             logger.info("Honeypot post from admin %s — ignored.", author)
             return
 
-        is_scam, detail = await self._honeypot_detect_scam(message)
+        is_scam, category, detail = await self._honeypot_detect_scam(message)
         if is_scam:
-            await self._honeypot_ban(message, reason=f"Honeypot scam ({detail})")
+            await self._honeypot_ban(
+                message,
+                reason=f"Honeypot {category}",
+                catch=(category, detail),
+            )
             return
 
         # Accidental / benign post: remove it and warn the user.
@@ -387,8 +435,9 @@ class MessageHandler:
             # interaction, and this fires from a normal message the bot reacts to.
             try:
                 await message.channel.send(
-                    f"{author.mention} this is a bait channel — please don't post here. "
-                    f"Warning {count}/{self.honeypot_warn_limit}; keep going and you'll be banned.",
+                    f"{author.mention}, please — you mustn't post here; this place is set aside to "
+                    f"catch ill-meaning bots. This is warning {count}/{self.honeypot_warn_limit}. "
+                    f"I would be so sad to have to see you out, so do take care.",
                     delete_after=15,
                 )
             except discord.Forbidden:
@@ -403,7 +452,7 @@ class MessageHandler:
         # Honeypot mode: if a honeypot channel is configured, the bot ONLY
         # moderates that channel and ignores every other channel, so an
         # over-eager verdict can never cause a wrongful ban elsewhere.
-        honeypot_id = int(getattr(self.config, "HONEYPOT_CHANNEL_ID", 0) or 0)
+        honeypot_id = self._honeypot_channel_id(guild)
         if honeypot_id:
             if message.channel.id == honeypot_id:
                 await self._handle_honeypot(message)
@@ -447,10 +496,12 @@ class MessageHandler:
                     await message.author.ban(reason=verdict)
                     self._stat(guild, "auto_bans")
                     self._record(guild, message.author.id, reason=verdict, url=url)
+                    self._log_catch(guild, message.author, f"url:{verdict}", url, message.channel)
                     self._reset_warns(message.author.id)
                     await self._notify(
                         guild, message.channel,
-                        f"{message.author.mention} has been banned for {verdict}",
+                        f"I am sorry — I had to see {message.author.mention} out for {verdict}. "
+                        f"I take no joy in it; I only wish to keep everyone here safe.",
                     )
 
                 elif verdict in ("adult", "gambling"):
@@ -468,7 +519,8 @@ class MessageHandler:
                     self._record(guild, message.author.id, reason=reason, url=url)
                     await self._notify(
                         guild, message.channel,
-                        f"{message.author.mention} timeout {duration} ({reason})",
+                        f"{message.author.mention}, I must ask you to step back for a little while "
+                        f"({duration}) — {reason}. Please be mindful; I would far rather guide you than scold you.",
                     )
                     if warn_count >= 5:
                         await message.author.ban(reason=f"Reached {warn_count} warnings")
@@ -480,7 +532,8 @@ class MessageHandler:
                         )
                         await self._notify(
                             guild, message.channel,
-                            f"{message.author.mention} has been banned after {warn_count} warnings",
+                            f"I am truly sorry. After {warn_count} warnings I had no choice but to see "
+                            f"{message.author.mention} out. I gave every chance I could.",
                         )
 
             except discord.NotFound:

@@ -78,6 +78,28 @@ class GuildSettings:
         self._guild(guild_id)["whitelist"] = sorted(wl)
         self._save()
 
+    # ── Honeypot channel ──────────────────────────────────────────────────────
+
+    def get_honeypot_channel(self, guild_id: int):
+        """Channel id of the honeypot, 0 if explicitly off, or None if unset."""
+        val = self._guild(guild_id).get("honeypot_channel_id")
+        return int(val) if val is not None else None
+
+    def set_honeypot_channel(self, guild_id: int, channel_id: int):
+        self._guild(guild_id)["honeypot_channel_id"] = int(channel_id)
+        self._save()
+
+    # ── Log channel ───────────────────────────────────────────────────────────
+
+    def get_log_channel(self, guild_id: int):
+        """Channel id for moderation logs, 0 if explicitly off, or None if unset."""
+        val = self._guild(guild_id).get("log_channel_id")
+        return int(val) if val is not None else None
+
+    def set_log_channel(self, guild_id: int, channel_id: int):
+        self._guild(guild_id)["log_channel_id"] = int(channel_id)
+        self._save()
+
     # ── Violations / history ────────────────────────────────────────────────
 
     def record_violation(self, guild_id: int, user_id: int, url: str = "", reason: str = ""):
