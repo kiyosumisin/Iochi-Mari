@@ -47,7 +47,28 @@ class URLEvaluator:
         """Verdicts depend on the decision threshold, so it is part of the key."""
         return f"{threshold}|{url}"
 
-    async def evaluate(self, url: str, threshold: float | None = None):
+    def _cache_detail(self, cache_key, now, verdict, probability, is_malicious, top_features, sources):
+        detail = {
+            "verdict": verdict,
+            "probability": probability,
+            "is_malicious": is_malicious,
+            "top_features": top_features,
+            "sources": sources,
+        }
+        self.cache[cache_key] = {"time": now, "detail": detail}
+        return detail
+
+    async def evaluate(self, url: str, threshold: float | None = None) -> str:
+        """Backward-compatible: return just the verdict string."""
+        detail = await self.evaluate_detailed(url, threshold)
+        return detail["verdict"]
+
+    async def evaluate_detailed(self, url: str, threshold: float | None = None) -> dict:
+        """
+        Full evaluation result: verdict + AI probability + is_malicious + SHAP
+        top features + the list of contributing sources. Used by the agent layer
+        to detect borderline cases.
+        """
         now = time.time()
 
         original_url = url
@@ -55,10 +76,13 @@ class URLEvaluator:
 
         cached = self.cache.get(cache_key)
         if cached and now - cached["time"] < self.CACHE_TTL:
-            return cached["verdict"]
+            return cached["detail"]
 
         verdicts = []
         sources = []
+        probability = None
+        is_malicious = False
+        top_features = []
 
         domain = URLUtils.get_domain(url)
         if domain in SHORTENER_DOMAINS:
@@ -69,14 +93,12 @@ class URLEvaluator:
 
         domain = URLUtils.get_domain(url)
         if self._is_listed(domain, self.whitelist):
-            self.cache[cache_key] = {"time": now, "verdict": "safe"}
             logger.info("URL whitelisted | url=%s | domain=%s", url, domain)
-            return "safe"
+            return self._cache_detail(cache_key, now, "safe", None, False, [], ["whitelist"])
 
         if self._is_listed(domain, self.blacklist):
-            self.cache[cache_key] = {"time": now, "verdict": "malware"}
             logger.info("URL blacklisted | url=%s | domain=%s", url, domain)
-            return "malware"
+            return self._cache_detail(cache_key, now, "malware", 1.0, True, [], ["blacklist"])
 
         heur = HeuristicScanner.scan(url)
         if heur:
@@ -86,18 +108,22 @@ class URLEvaluator:
 
         try:
             prediction = predict_url(url, threshold=threshold)
-            prob = prediction.probability
+            probability = prediction.probability
             is_malicious = prediction.is_malicious
+            top_features = [
+                {"feature": f.feature, "value": f.value, "shap": f.shap_value}
+                for f in prediction.top_features
+            ]
             override_threshold = float(os.getenv("AI_OVERRIDE_THRESHOLD", "0.9"))
             if is_malicious:
-                if (not has_soft_category) or prob >= override_threshold:
+                if (not has_soft_category) or probability >= override_threshold:
                     verdicts.append("phishing")
-                    sources.append(f"ai:phishing:{prob:.4f}")
+                    sources.append(f"ai:phishing:{probability:.4f}")
             else:
                 scam_threshold = float(os.getenv("AI_SCAM_THRESHOLD", "0.3"))
-                if (not has_soft_category) and prob >= scam_threshold:
+                if (not has_soft_category) and probability >= scam_threshold:
                     verdicts.append("scam")
-                    sources.append(f"ai:scam:{prob:.4f}")
+                    sources.append(f"ai:scam:{probability:.4f}")
         except Exception as exc:
             logger.warning("AI prediction failed: %s", exc)
 
@@ -122,11 +148,10 @@ class URLEvaluator:
             if v in ("adult", "gambling", "scam"):
                 final = v
 
-        self.cache[cache_key] = {"time": now, "verdict": final}
         logger.info(
             "URL final verdict | url=%s | verdict=%s | sources=%s",
             original_url,
             final,
             ";".join(sources) if sources else "none",
         )
-        return final
+        return self._cache_detail(cache_key, now, final, probability, is_malicious, top_features, sources)

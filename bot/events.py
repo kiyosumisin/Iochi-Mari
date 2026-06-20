@@ -1,12 +1,14 @@
 import os
 import csv
 import json
+import asyncio
 from pathlib import Path
 from datetime import timedelta, datetime, timezone
 import discord
 import logging
 from core.url_utils import URLUtils
 from core.image_scanner import ocr_image_bytes, append_ocr_log, scan_ocr_text
+from ai.agent import domain_age_days
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +81,11 @@ def _log_page_content(url: str, verdict: str) -> None:
 
 
 class MessageHandler:
-    def __init__(self, evaluator, config, guild_settings=None):
+    def __init__(self, evaluator, config, guild_settings=None, agent=None):
         self.evaluator = evaluator
         self.config = config
         self.guild_settings = guild_settings
+        self.agent = agent
         self.warn_file = Path(__file__).resolve().parent.parent / "data" / "warnings.json"
         self.warns = self._load_warns()
         self.timeout_durations = os.getenv(
@@ -185,6 +188,130 @@ class MessageHandler:
                 ])
         except Exception as exc:
             logger.warning("Could not write scam catch log: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Borderline agent layer (Gemini)
+    # ------------------------------------------------------------------
+    def _is_borderline(self, detail: dict, verdict: str) -> bool:
+        if not (self.agent and getattr(self.agent, "enabled", False)):
+            return False
+        if verdict not in ("phishing", "scam"):
+            return False
+        prob = detail.get("probability")
+        if prob is None:
+            return False
+        sources = detail.get("sources", [])
+        hard = ("blacklist" in sources) or any(str(s).startswith("scanner:") for s in sources)
+        if hard:
+            return False
+        low = float(getattr(self.config, "AI_BORDERLINE_LOW", 0.4))
+        high = float(getattr(self.config, "AI_BORDERLINE_HIGH", 0.7))
+        return low <= prob <= high
+
+    async def _recent_messages(self, message, author, limit: int = 5):
+        out = []
+        try:
+            async for m in message.channel.history(limit=50):
+                if m.id == message.id:
+                    continue
+                if m.author.id == author.id:
+                    out.append((m.content or "")[:200])
+                    if len(out) >= limit:
+                        break
+        except Exception as exc:
+            logger.warning("Could not fetch recent messages: %s", exc)
+        return out
+
+    async def _handle_borderline(self, message, url, verdict, detail, guild) -> bool:
+        """
+        Hand a borderline case to the Gemini agent: investigate -> (optional data
+        fetch) -> explain -> post to the mod log. Returns True if the case was
+        flagged (no auto-action); returns False if the agent is unavailable or
+        fails, so the caller falls back to the original LightGBM action.
+        """
+        if not (self.agent and getattr(self.agent, "enabled", False)):
+            return False
+
+        author = message.author
+        domain = URLUtils.get_domain(url)
+
+        try:
+            from ai.feature_extractor import extract_features
+            raw = extract_features(url)
+        except Exception:
+            raw = {}
+
+        age_days = None
+        created = getattr(author, "created_at", None)
+        if created is not None:
+            try:
+                age_days = (datetime.now(timezone.utc) - created).days
+            except Exception:
+                age_days = None
+
+        prior = 0
+        if guild and self.guild_settings:
+            prior = len(self.guild_settings.get_violations(guild.id, author.id))
+
+        case = {
+            "guild_id": getattr(guild, "id", None),
+            "user_id": getattr(author, "id", None),
+            "user": str(author),
+            "channel": getattr(message.channel, "name", None),
+            "message_text": (message.content or "")[:500],
+            "url": url,
+            "domain": domain,
+            "verdict": verdict,
+            "probability": detail.get("probability"),
+            "shap_top_features": detail.get("top_features"),
+            "url_features": {
+                k: raw.get(k)
+                for k in (
+                    "url_length", "domain_length", "subdomain_depth", "entropy",
+                    "num_digits", "num_special", "is_ip_address", "tld_suspicious",
+                )
+                if k in raw
+            },
+            "account_age_days": age_days,
+            "prior_violations": prior,
+        }
+
+        # 1) Investigate: let the agent decide what extra data to gather.
+        inv = await self.agent.investigate_case(case)
+        if inv:
+            if inv.get("fetch_recent_messages"):
+                case["recent_messages"] = await self._recent_messages(message, author)
+            if inv.get("check_domain_age"):
+                loop = asyncio.get_event_loop()
+                case["domain_age_days"] = await loop.run_in_executor(
+                    None, domain_age_days, domain
+                )
+            case["investigation"] = inv
+
+        # 2) Explain: produce the mod-log assessment.
+        explanation = await self.agent.explain_case(case)
+        if not explanation:
+            return False  # agent failed -> fall back to the original action
+
+        prob = detail.get("probability")
+        susp = (inv or {}).get("suspicion", "unknown")
+        await self._notify(
+            guild, message.channel,
+            f"**Borderline case flagged for review** — {author} in "
+            f"#{getattr(message.channel, 'name', '?')}\n"
+            f"Link: `{url}` | AI verdict: `{verdict}` "
+            f"(p={prob:.2f}) | suspicion: `{susp}`\n"
+            f"{explanation}\n"
+            f"Action: flagged for manual review (no automatic action taken).",
+        )
+        logger.info(
+            "Borderline flagged | user=%s | url=%s | p=%.3f | suspicion=%s",
+            getattr(author, "id", "?"),
+            url,
+            prob if prob is not None else -1,
+            susp,
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Helpers for scam image action
@@ -466,7 +593,8 @@ class MessageHandler:
 
         urls = URLUtils.extract_urls(message.content)
         for url in urls:
-            verdict = await self.evaluator.evaluate(url, threshold=guild_threshold)
+            detail = await self.evaluator.evaluate_detailed(url, threshold=guild_threshold)
+            verdict = detail["verdict"]
             domain = URLUtils.get_domain(url)
 
             self._stat(guild, "urls_scanned")
@@ -488,6 +616,14 @@ class MessageHandler:
 
             if verdict not in ("safe", "none"):
                 _log_page_content(url, verdict)
+
+            # Borderline agent layer: when the AI is uncertain (probability in the
+            # configured band) with no hard signal, hand the case to the Gemini
+            # agent for review instead of auto-banning. Falls back to the original
+            # LightGBM action if the agent is unavailable or fails.
+            if self._is_borderline(detail, verdict):
+                if await self._handle_borderline(message, url, verdict, detail, guild):
+                    continue
 
             try:
                 if verdict in ("malware", "phishing", "scam"):

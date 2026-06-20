@@ -30,6 +30,10 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.5.0
 
+# ── AI Agent (Gemini analysis layer for borderline cases) ────
+google-generativeai>=0.7.0   # legacy SDK requested; system_instruction needs >=0.7
+python-whois>=0.9.0          # domain-age lookups during investigation
+
 # ── Testing ──────────────────────────────────────────────────
 pytest>=7.4.0
 pytest-asyncio>=0.21.0

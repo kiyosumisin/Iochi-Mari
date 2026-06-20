@@ -5,6 +5,7 @@ from core.config import Config
 from core.external_scanners import ExternalScanners
 from core.url_evaluator import URLEvaluator
 from core.guild_settings import GuildSettings
+from ai.agent import MariAgent
 from bot.events import MessageHandler
 from bot.commands import BasicCommands, AdminCommands
 
@@ -23,7 +24,10 @@ class MariBot(commands.Bot):
         self.scanners = ExternalScanners(self.config)
         self.evaluator = URLEvaluator(self.scanners)
         self.guild_settings = GuildSettings()
-        self.handler = MessageHandler(self.evaluator, self.config, self.guild_settings)
+        self.agent = MariAgent(self.config)
+        self.handler = MessageHandler(
+            self.evaluator, self.config, self.guild_settings, self.agent
+        )
         self.synced = False
 
     async def setup_hook(self):

@@ -123,25 +123,31 @@ class BasicCommands(commands.Cog):
             inline=False,
         )
         embed.add_field(
-            name="Server Management (requires Manage Server permission)",
+            name="Moderation (Administrator)",
             value=(
-                "`/adultchannel add #channel` — Designate a channel for adult content\n"
-                "`/adultchannel remove #channel` — Remove a channel from that list\n"
-                "`/adultchannel list` — View all designated channels\n"
-                "`/adultchannel clear` — Clear the entire list\n"
-                "`/whitelist add <domain>` — Mark a domain as trusted\n"
-                "`/whitelist remove <domain>` — Remove a domain from the trusted list\n"
-                "`/whitelist list` — View all trusted domains\n"
-                "`/purge <amount> [filter]` — Delete up to 1000 messages, optionally filtered "
-                "(any/user/match/not/startswith/endswith/links/invites/images/embeds/mentions/bots/humans)\n"
-                "`/ban <user> [reason]` — Remove a member from this server\n"
+                "`/purge <count> [filter]` — Delete up to 1000 messages (filters: user, match, links, images, bots, …)\n"
+                "`/ban <user> [reason]` — Remove a member\n"
                 "`/unban <user_id>` — Lift a ban by user ID\n"
-                "`/history <user>` — Review a member's past violations\n"
-                "`/threshold <0.0-1.0>` — Adjust the detection sensitivity\n"
-                "`/stats` — View this server's protection summary\n"
+                "`/history <user>` — Review a member's past violations"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Configuration (Administrator)",
+            value=(
                 "`/honeypot set #channel` / `off` / `status` — Manage the bait channel\n"
-                "`/logchannel set #channel` / `off` / `status` — Choose where I send moderation logs\n"
-                "`/scamlog` — Show the log of scams caught (evidence)"
+                "`/logchannel set #channel` / `off` / `status` — Where I send moderation logs\n"
+                "`/adultchannel add` / `remove` / `list` / `clear` — Channels allowed adult content\n"
+                "`/whitelist add` / `remove` / `list` — Trusted domains (skip scanning)\n"
+                "`/threshold <0.0-1.0>` — Adjust detection sensitivity"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Reports (Administrator)",
+            value=(
+                "`/stats` — This server's protection summary\n"
+                "`/scamlog` — The log of scams caught (evidence)"
             ),
             inline=False,
         )
@@ -165,7 +171,7 @@ class AdminCommands(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.checks.cooldown(1, 5.0)
     @app_commands.describe(
-        amount="How many messages to scan and delete (1-1000)",
+        count="How many messages to scan and delete (1-1000)",
         filter="Which messages to delete (default: any)",
         user="Member whose messages to delete — for the 'user' filter",
         text="Text to look for — for match / not / startswith / endswith",
@@ -190,7 +196,7 @@ class AdminCommands(commands.Cog):
     async def purge(
         self,
         interaction: discord.Interaction,
-        amount: app_commands.Range[int, 1, 1000],
+        count: app_commands.Range[int, 1, 1000],
         filter: app_commands.Choice[str] = None,
         user: discord.Member = None,
         text: str = None,
@@ -263,7 +269,7 @@ class AdminCommands(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            kwargs = {"limit": amount, "bulk": True}
+            kwargs = {"limit": count, "bulk": True}
             if check is not None:
                 kwargs["check"] = check
             deleted = await interaction.channel.purge(**kwargs)
@@ -727,6 +733,38 @@ class AdminCommands(commands.Cog):
             )
         embed.set_footer(text=f"Showing the last {len(recent)} of {total} — the full record is attached.")
         await interaction.response.send_message(embed=embed, file=discord.File(str(path)))
+
+    # -- Why (Gemini agent) --------------------------------------------------
+    @app_commands.command(name="why", description="Ask Mari why a user was flagged or actioned")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(user="The member to ask about")
+    async def why(self, interaction: discord.Interaction, user: discord.Member):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "Forgive me — this is something I can only do within a server.", ephemeral=True
+            )
+            return
+        agent = getattr(self.bot, "agent", None)
+        if not agent or not getattr(agent, "enabled", False):
+            await interaction.response.send_message(
+                "I'm sorry, my analysis assistant is not configured right now.", ephemeral=True
+            )
+            return
+        record = agent.latest_case_for(interaction.guild.id, user.id)
+        if not record:
+            await interaction.response.send_message(
+                f"I have no recorded analysis for **{user}** to draw upon.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(thinking=True)
+        answer = await agent.answer_why(record)
+        if not answer:
+            await interaction.followup.send(
+                "I'm sorry, I could not put together an answer just now. Please try again in a moment."
+            )
+            return
+        await interaction.followup.send(f"**Regarding {user}** — {answer}")
 
     # -- Global error handler ------------------------------------------------
     async def cog_app_command_error(

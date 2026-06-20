@@ -19,6 +19,9 @@ Sisterhood), so all of the bot's messages speak in her calm, caring voice.
   scam link/image there is banned instantly, while the bot leaves every other channel
   alone (near-zero false positives).
 - **Auto-moderation** — deletes offending messages and bans/timeouts the author.
+- **Gemini agent layer** *(optional)* — for borderline cases the classifier is unsure
+  about, a Gemini agent investigates and writes a short explanation to the mod log
+  instead of auto-banning; `/why` lets mods ask about a user afterwards.
 - **Per-guild configuration via slash commands** — channels, whitelist and sensitivity
   are all set in Discord; no need to edit files per server.
 - **Evidence log** — every successful catch is recorded to `log/scam_catches.csv` and
@@ -45,6 +48,15 @@ Actions taken:
 When a **honeypot channel** is set, the bot moderates **only** that channel: a scam
 link/image → instant ban; an accidental benign post → delete + warning, with a ban
 after the warning limit is exceeded. Admins are never punished there.
+
+**Borderline cases (optional Gemini agent).** When the AI probability falls in the
+uncertain band (`AI_BORDERLINE_LOW`–`AI_BORDERLINE_HIGH`, default 0.4–0.7) and no hard
+signal (blacklist / external scanner) fired, the bot does **not** auto-ban. Instead the
+Gemini agent decides whether to gather more data (recent messages, WHOIS domain age),
+writes a 2-3 sentence assessment, and flags the case to the mod log for a human to
+decide. If Gemini is unavailable, times out, or is rate-limited, it falls back to the
+original LightGBM action. This runs only in normal mode (not the honeypot) and only for
+borderline cases — every other message uses the fast path unchanged.
 
 All moderation notices go to the configured **log channel** (`/logchannel`), keeping
 public channels clean.
@@ -81,6 +93,8 @@ public channels clean.
   - Linux: `sudo apt-get install tesseract-ocr`
   - For Vietnamese OCR also install the `vie` language data and set `OCR_LANG=vie+eng`.
 - A **Discord bot application** (token + privileged intents — see below)
+- *(Optional)* a **Gemini API key** to enable the borderline-case agent layer
+  (`google-generativeai` and `python-whois` ship in `requirements.txt`)
 
 ---
 
@@ -126,6 +140,7 @@ best configured with the slash commands below (stored per server).
 DISCORD_TOKEN=your_discord_bot_token
 GOOGLE_API_KEY=your_key        # optional — enables Google Safe Browsing
 VIRUSTOTAL_API_KEY=your_key    # optional — enables VirusTotal
+GEMINI_API_KEY=your_key        # optional — enables the borderline-case agent + /why
 ```
 
 ### Optional tuning (environment variables)
@@ -143,6 +158,11 @@ VIRUSTOTAL_API_KEY=your_key    # optional — enables VirusTotal
 | `AI_MODEL_PATH` | `ai/model.pkl` | Custom model path |
 | `TIMEOUT_DURATIONS` | `10m,1h,6h,1d,3d` | Escalating timeout ladder for adult/gambling |
 | `HONEYPOT_WARN_LIMIT` | `3` | Honeypot warnings before a ban |
+| `AGENT_ENABLED` | `true` | Master switch for the Gemini agent (also needs `GEMINI_API_KEY`) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model name |
+| `AI_BORDERLINE_LOW` / `AI_BORDERLINE_HIGH` | `0.4` / `0.7` | Probability band treated as borderline |
+| `GEMINI_RPM` / `GEMINI_RPD` | `15` / `1500` | Gemini rate limits (free tier) |
+| `GEMINI_TIMEOUT` | `8` | Per-call timeout (seconds) before fallback |
 
 `LOG_CHANNEL_ID`, `HONEYPOT_CHANNEL_ID` and `ADULT_CHANNEL_IDS` also exist as env
 fallbacks, but prefer the per-server slash commands — they work correctly across
@@ -181,6 +201,7 @@ multiple servers.
 | `/logchannel set #channel \| off \| status` | Choose where moderation logs are sent |
 | `/adultchannel add \| remove \| list \| clear` | Channels where adult content is allowed |
 | `/whitelist add \| remove \| list` | Trusted domains that skip scanning |
+| `/why <user>` | Ask the Gemini agent why a user was flagged/actioned (from the case log) |
 
 Admin commands are hidden from the slash menu via Discord `default_permissions`
 (Administrator) and re-checked at runtime. Server owners can still delegate individual
@@ -199,6 +220,25 @@ python -m ai.train --with-page   # also fetch live page features (slower)
 
 The bot itself only uses the probability/verdict, so SHAP explainability is **off by
 default**. Enable it (e.g. for `app.py`) with `AI_ENABLE_SHAP=true`.
+
+---
+
+## Gemini agent layer (borderline cases)
+
+`ai/agent.py` adds an optional Gemini-powered layer used **only** for borderline URL
+cases (probability inside the borderline band, no hard signal). It:
+
+- **investigates** — decides as structured JSON whether to fetch recent messages or a
+  WHOIS domain-age lookup;
+- **explains** — writes a short English assessment to the mod log (no auto-ban); and
+- answers **`/why <user>`** — a moderator can ask why a user was flagged, and the agent
+  replies in the channel from the recorded case log.
+
+Every call is logged to `log/agent_calls.jsonl` (git-ignored). The layer is
+rate-limited and fails safe: any error / timeout / rate-limit falls back to the original
+LightGBM decision. It stays disabled unless `GEMINI_API_KEY` is set and
+`google-generativeai` is installed. System instructions (fixed rules) are kept separate
+from the per-case prompt.
 
 ---
 
@@ -236,6 +276,8 @@ on the server.
 - **OCR reads nothing** — verify Tesseract is installed (and the `vie` data for
   Vietnamese), or set `OCR_ENABLED=false`.
 - **Notices appear in the public channel** — set a log channel with `/logchannel set`.
+- **Borderline cases not flagged** — set `GEMINI_API_KEY`, install `google-generativeai`,
+  and look for "MariAgent enabled" in `log/mari.log`.
 
 ---
 

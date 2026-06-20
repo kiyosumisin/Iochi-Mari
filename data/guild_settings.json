@@ -27,8 +27,8 @@
   },
   "894938982692061244": {
     "stats": {
-      "links_blocked": 8,
-      "auto_bans": 7
+      "links_blocked": 9,
+      "auto_bans": 8
     },
     "violations": {
       "918538108411195482": [
@@ -70,6 +70,13 @@
           "timestamp": "2026-06-13 01:42 UTC",
           "url": "",
           "reason": "Honeypot scam (image:scam)"
+        }
+      ],
+      "951009041814024212": [
+        {
+          "timestamp": "2026-06-19 18:02 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
         }
       ]
     },
