@@ -1,4 +1,5 @@
 import discord
+import asyncio
 import logging
 from discord.ext import commands
 from core.config import Config
@@ -47,6 +48,14 @@ class MariBot(commands.Bot):
             logger.info("Synced global app commands")
 
         self.synced = True
+
+        # Pre-load the URL model so the first scan doesn't block on a cold start.
+        try:
+            from ai.predict import load_model
+            await asyncio.to_thread(load_model)
+            logger.info("URL model pre-loaded.")
+        except Exception as exc:
+            logger.warning("Could not pre-load URL model: %s", exc)
 
     async def on_ready(self):
         print(f"Mari is here: {self.user}")

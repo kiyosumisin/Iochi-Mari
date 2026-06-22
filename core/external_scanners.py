@@ -1,16 +1,5 @@
 import aiohttp
-from bs4 import BeautifulSoup
-from core.heuristic_scanner import HeuristicScanner
-from core.url_utils import URLUtils
 
-SAFE_PAGE_SCAN_DOMAINS = {
-    "discord.com",
-    "discord.gg",
-    "youtube.com",
-    "www.youtube.com",
-    "facebook.com",
-    "www.facebook.com",
-}
 
 class ExternalScanners:
     def __init__(self, config):
@@ -63,27 +52,5 @@ class ExternalScanners:
                     stats = info["data"]["attributes"]["last_analysis_stats"]
                     if stats.get("malicious", 0) + stats.get("suspicious", 0) > 0:
                         return "malware"
-        except Exception:
-            return None
-
-    async def page_scan(self, url):
-        try:
-            domain = URLUtils.get_domain(url)
-            if domain in SAFE_PAGE_SCAN_DOMAINS:
-                return None
-
-            async with aiohttp.ClientSession() as s:
-                async with s.get(url, timeout=10) as r:
-                    html = await r.text(errors="ignore")
-                    soup = BeautifulSoup(html, "html.parser")
-                    content = (soup.title.string if soup.title else "") + html[:3000]
-                    text = content.lower()
-
-                    if any(k in text for k in HeuristicScanner.ADULT):
-                        return "adult"
-                    if any(k in text for k in HeuristicScanner.GAMBLING):
-                        return "gambling"
-                    if any(k in text for k in HeuristicScanner.SCAM):
-                        return "scam"
         except Exception:
             return None

@@ -107,7 +107,7 @@ class URLEvaluator:
         has_soft_category = heur in ("adult", "gambling")
 
         try:
-            prediction = predict_url(url, threshold=threshold)
+            prediction = await asyncio.to_thread(predict_url, url, threshold=threshold)
             probability = prediction.probability
             is_malicious = prediction.is_malicious
             top_features = [
@@ -127,12 +127,22 @@ class URLEvaluator:
         except Exception as exc:
             logger.warning("AI prediction failed: %s", exc)
 
-        tasks = [
-            ContentScanner.scan(url),
-            self.scanners.google_safe_browsing(url),
-            self.scanners.virustotal(url),
-            self.scanners.page_scan(url),
-        ]
+        # Short-circuit the external scanners to save latency and API quota.
+        # Google Safe Browsing is cheap (high quota) so it always runs as an
+        # independent safety net. The rate-limited VirusTotal and the page-fetch
+        # content scan only run when the local classifiers are NOT already
+        # confident — so clearly-safe and clearly-malicious URLs skip them.
+        # (page_scan is dropped entirely: it duplicated ContentScanner's fetch.)
+        ovr = float(os.getenv("AI_OVERRIDE_THRESHOLD", "0.9"))
+        safe = float(os.getenv("AI_SAFE_THRESHOLD", "0.15"))
+        confident_malicious = probability is not None and probability >= ovr
+        confident_safe = probability is not None and probability <= safe and not heur
+        uncertain = probability is None or not (confident_malicious or confident_safe)
+
+        tasks = [self.scanners.google_safe_browsing(url)]
+        if uncertain:
+            tasks.append(ContentScanner.scan(url))
+            tasks.append(self.scanners.virustotal(url))
 
         results = await asyncio.gather(*tasks)
         for v in results:

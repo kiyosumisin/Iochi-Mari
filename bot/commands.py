@@ -128,7 +128,8 @@ class BasicCommands(commands.Cog):
                 "`/purge <count> [filter]` — Delete up to 1000 messages (filters: user, match, links, images, bots, …)\n"
                 "`/ban <user> [reason]` — Remove a member\n"
                 "`/unban <user_id>` — Lift a ban by user ID\n"
-                "`/history <user>` — Review a member's past violations"
+                "`/history <user>` — Review a member's past violations\n"
+                "`/why <user>` — Ask why a user was flagged (Gemini agent)"
             ),
             inline=False,
         )

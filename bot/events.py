@@ -468,7 +468,8 @@ class MessageHandler:
                 if not self._is_image_attachment(att):
                     continue
                 try:
-                    text = ocr_image_bytes(await att.read())
+                    raw = await att.read()
+                    text = await asyncio.to_thread(ocr_image_bytes, raw)
                     if text and text.strip():
                         verdict = scan_ocr_text(text)
                         append_ocr_log(
@@ -615,7 +616,9 @@ class MessageHandler:
             )
 
             if verdict not in ("safe", "none"):
-                _log_page_content(url, verdict)
+                # Fire-and-forget in a thread: the page-content log does blocking
+                # HTTP fetches, so never let it stall the event loop or the action.
+                asyncio.create_task(asyncio.to_thread(_log_page_content, url, verdict))
 
             # Borderline agent layer: when the AI is uncertain (probability in the
             # configured band) with no hard signal, hand the case to the Gemini
@@ -691,7 +694,7 @@ class MessageHandler:
 
             try:
                 data = await attachment.read()
-                text = ocr_image_bytes(data)
+                text = await asyncio.to_thread(ocr_image_bytes, data)
                 if text and text.strip():
                     verdict = scan_ocr_text(text)
                     append_ocr_log(
