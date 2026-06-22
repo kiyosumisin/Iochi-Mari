@@ -32,9 +32,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 except Exception:  # pragma: no cover - library optional
     genai = None
+    types = None
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,7 @@ class MariAgent:
         agent_on = getattr(config, "AGENT_ENABLED", True)
 
         self.enabled = bool(self.api_key) and genai is not None and agent_on
-        self._models: dict[str, object] = {}
+        self._client = None
 
         # Rate limiting (free tier ~15 RPM / 1500 RPD) + timeout.
         self._lock = asyncio.Lock()
@@ -108,24 +110,13 @@ class MariAgent:
 
         if self.enabled:
             try:
-                genai.configure(api_key=self.api_key)
+                self._client = genai.Client(api_key=self.api_key)
                 logger.info("MariAgent enabled (model=%s)", self.model_name)
             except Exception as exc:
                 logger.warning("MariAgent init failed, disabling: %s", exc)
                 self.enabled = False
         else:
             logger.info("MariAgent disabled (no GEMINI_API_KEY / library / AGENT_ENABLED).")
-
-    # -- one model object per system instruction (cached) --------------------
-    def _model(self, system_instruction: str):
-        m = self._models.get(system_instruction)
-        if m is None:
-            m = genai.GenerativeModel(
-                model_name=self.model_name,
-                system_instruction=system_instruction,
-            )
-            self._models[system_instruction] = m
-        return m
 
     # -- rate-limit gate: reserve one slot or refuse -------------------------
     async def _reserve_slot(self) -> bool:
@@ -149,16 +140,20 @@ class MariAgent:
             logger.warning("Gemini rate limit reached — skipping call (fallback).")
             return None
 
-        gen_config = {"temperature": 0.2}
-        if json_out:
-            gen_config["response_mime_type"] = "application/json"
-
-        model = self._model(system_instruction)
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.2,
+            response_mime_type="application/json" if json_out else None,
+        )
         delay = 1.0
         for attempt in range(3):
             try:
                 resp = await asyncio.wait_for(
-                    model.generate_content_async(prompt, generation_config=gen_config),
+                    self._client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=prompt,
+                        config=config,
+                    ),
                     timeout=self._timeout,
                 )
                 text = (resp.text or "").strip()

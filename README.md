@@ -94,7 +94,7 @@ public channels clean.
   - For Vietnamese OCR also install the `vie` language data and set `OCR_LANG=vie+eng`.
 - A **Discord bot application** (token + privileged intents — see below)
 - *(Optional)* a **Gemini API key** to enable the borderline-case agent layer
-  (`google-generativeai` and `python-whois` ship in `requirements.txt`)
+  (`google-genai` and `python-whois` ship in `requirements.txt`)
 
 ---
 
@@ -237,7 +237,7 @@ cases (probability inside the borderline band, no hard signal). It:
 Every call is logged to `log/agent_calls.jsonl` (git-ignored). The layer is
 rate-limited and fails safe: any error / timeout / rate-limit falls back to the original
 LightGBM decision. It stays disabled unless `GEMINI_API_KEY` is set and
-`google-generativeai` is installed. System instructions (fixed rules) are kept separate
+`google-genai` is installed. System instructions (fixed rules) are kept separate
 from the per-case prompt.
 
 ---
@@ -276,7 +276,7 @@ on the server.
 - **OCR reads nothing** — verify Tesseract is installed (and the `vie` data for
   Vietnamese), or set `OCR_ENABLED=false`.
 - **Notices appear in the public channel** — set a log channel with `/logchannel set`.
-- **Borderline cases not flagged** — set `GEMINI_API_KEY`, install `google-generativeai`,
+- **Borderline cases not flagged** — set `GEMINI_API_KEY`, install `google-genai`,
   and look for "MariAgent enabled" in `log/mari.log`.
 
 ---
