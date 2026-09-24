@@ -186,6 +186,7 @@ class BasicCommands(MariCog):
             value=(
                 "`/honeypot set #channel` / `off` / `status` — Manage the bait channel\n"
                 "`/logchannel set #channel` / `off` / `status` — Where I send moderation logs\n"
+                "`/datamine set #channel` / `off` / `status` — Post new Discord datamine notes\n"
                 "`/adultchannel add` / `remove` / `list` / `clear` — Channels allowed adult content\n"
                 "`/whitelist add` / `remove` / `list` — Trusted domains (skip scanning)\n"
                 "`/threshold <0.0-1.0>` — Adjust detection sensitivity"

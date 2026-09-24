@@ -100,6 +100,16 @@ class GuildSettings:
         self._guild(guild_id)["log_channel_id"] = int(channel_id)
         self._save()
 
+    # ── Datamine feed channel ─────────────────────────────────────────────────
+
+    def get_datamine_channel(self, guild_id: int) -> int:
+        """Channel id for the Discord datamine feed, 0 if off/unset."""
+        return int(self._guild(guild_id).get("datamine_channel_id") or 0)
+
+    def set_datamine_channel(self, guild_id: int, channel_id: int):
+        self._guild(guild_id)["datamine_channel_id"] = int(channel_id)
+        self._save()
+
     # ── Violations / history ────────────────────────────────────────────────
 
     def record_violation(self, guild_id: int, user_id: int, url: str = "", reason: str = ""):

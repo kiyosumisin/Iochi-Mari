@@ -9,6 +9,7 @@ from .moderation import ModerationCommands
 from .config_cmds import ConfigCommands
 from .reports import ReportCommands
 from .owner import OwnerCommands
+from .datamine import DatamineCommands
 
 ALL_COGS = [
     BasicCommands,
@@ -16,4 +17,5 @@ ALL_COGS = [
     ConfigCommands,
     ReportCommands,
     OwnerCommands,
+    DatamineCommands,
 ]
