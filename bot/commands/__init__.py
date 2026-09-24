@@ -10,6 +10,7 @@ from .config_cmds import ConfigCommands
 from .reports import ReportCommands
 from .owner import OwnerCommands
 from .datamine import DatamineCommands
+from .translate import TranslateCog
 
 ALL_COGS = [
     BasicCommands,
@@ -18,4 +19,5 @@ ALL_COGS = [
     ReportCommands,
     OwnerCommands,
     DatamineCommands,
+    TranslateCog,
 ]

@@ -135,6 +135,7 @@ class BasicCommands(MariCog):
             name="General",
             value=(
                 "`/check link <url>` — I will quietly inspect a link for you (only you will see the result)\n"
+                "React with a country flag — I will translate that message into its language\n"
                 "`!ping` — Check if I am present"
             ),
             inline=False,
