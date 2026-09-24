@@ -24,6 +24,24 @@ def flag_to_country(emoji: str):
     return None
 
 
+def split_text(text: str, limit: int = 4000) -> list[str]:
+    """Chunks of at most `limit` chars, cut at a paragraph, line, sentence or word
+    break (in that order of preference) so no word is split."""
+    chunks = []
+    while len(text) > limit:
+        for sep in ("\n\n", "\n", ". ", " "):
+            cut = text.rfind(sep, limit // 2, limit)
+            if cut != -1:
+                cut += len(sep)
+                break
+        else:
+            cut = limit  # one huge unbroken token: hard cut
+        chunks.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
+    chunks.append(text)
+    return chunks
+
+
 def shrink_image(data: bytes) -> bytes:
     """Re-encode as a JPEG of at most 1600px so it fits through the Gemini relay
     (Vercel caps request bodies at 4.5 MB); Gemini reads text fine at this size."""
@@ -90,19 +108,24 @@ class TranslateCog(MariCog):
             self._done.discard(key)  # let a later reaction retry
             return
 
-        embed = discord.Embed(
-            description=str(result["translation"])[:4000],
-            color=discord.Color.blurple(),
-        )
-        embed.set_author(
-            name=message.author.display_name, icon_url=message.author.display_avatar.url
-        )
+        parts = split_text(str(result["translation"]))[:5]  # cap spam from huge texts
         source = " (text read from the image)" if image is not None else ""
-        embed.set_footer(
-            text=f"Translated into {result.get('language', code)}{source} for {payload.member.display_name}"
+        footer = (
+            f"Translated into {result.get('language', code)}{source} "
+            f"for {payload.member.display_name}"
         )
         try:
             # Embed text never pings, so mentions inside the message stay harmless.
-            await message.reply(embed=embed, mention_author=False)
+            for i, part in enumerate(parts, 1):
+                embed = discord.Embed(description=part, color=discord.Color.blurple())
+                embed.set_footer(text=footer + (f" — part {i}/{len(parts)}" if len(parts) > 1 else ""))
+                if i == 1:
+                    embed.set_author(
+                        name=message.author.display_name,
+                        icon_url=message.author.display_avatar.url,
+                    )
+                    await message.reply(embed=embed, mention_author=False)
+                else:
+                    await channel.send(embed=embed)
         except discord.HTTPException as exc:
             logger.warning("Translation reply failed in #%s: %s", channel, exc)
