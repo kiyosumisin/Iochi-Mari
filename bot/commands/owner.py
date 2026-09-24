@@ -1,35 +1,12 @@
-"""Owner-only commands: !resync (command cleanup) and /text (speak/sticker)."""
+"""Owner-only commands: /text (speak a message or sticker through Mari)."""
 
 import discord
 from discord import app_commands
-from discord.ext import commands
 
-from .common import MariCog, is_owner, OWNER_ONLY_DENIAL
+from .common import MariCog, is_owner, OWNER_ONLY_DENIAL, say
 
 
 class OwnerCommands(MariCog):
-    @commands.command()
-    @commands.is_owner()
-    async def resync(self, ctx: commands.Context):
-        """Clean up duplicate/stale slash commands in this server (owner only)."""
-        try:
-            g = ctx.guild
-            if g is not None:
-                # Remove this server's command copies (left over from earlier
-                # !sync) so they stop duplicating the global ones.
-                ctx.bot.tree.clear_commands(guild=g)
-                await ctx.bot.tree.sync(guild=g)
-            # Re-sync the global set as the single source of truth.
-            synced = await ctx.bot.tree.sync()
-            names = ", ".join(sorted(c.name for c in synced)) or "(none)"
-            await ctx.send(
-                f"Tidied up — cleared this server's copies and re-synced "
-                f"{len(synced)} global commands:\n`{names}`\n"
-                f"Press Ctrl+R to refresh. Global changes can take up to ~1h to settle."
-            )
-        except Exception as e:
-            await ctx.send(f"Forgive me, I could not tidy the commands. `({e})`")
-
     # -- Speak through Mari (owner only) -------------------------------------
     @app_commands.command(
         name="text",
@@ -49,14 +26,12 @@ class OwnerCommands(MariCog):
         channel: discord.TextChannel = None,
     ):
         if not await is_owner(interaction):
-            await interaction.response.send_message(OWNER_ONLY_DENIAL, ephemeral=True)
+            await say(interaction, OWNER_ONLY_DENIAL)
             return
 
         target = channel or interaction.channel
         if not isinstance(target, (discord.TextChannel, discord.Thread)):
-            await interaction.response.send_message(
-                "I am sorry, I can only speak within a text channel.", ephemeral=True
-            )
+            await say(interaction, "I am sorry, I can only speak within a text channel.")
             return
 
         stickers = []
@@ -69,18 +44,18 @@ class OwnerCommands(MariCog):
                         found = s
                         break
             if not found:
-                await interaction.response.send_message(
+                await say(
+                    interaction,
                     "I am sorry, I could not find a sticker by that name here. "
                     "I am only able to send this server's own stickers.",
-                    ephemeral=True,
                 )
                 return
             stickers = [found]
 
         if not message and not stickers:
-            await interaction.response.send_message(
+            await say(
+                interaction,
                 "Please give me something to share — a message, a sticker, or both.",
-                ephemeral=True,
             )
             return
 
@@ -95,14 +70,14 @@ class OwnerCommands(MariCog):
             # No confirmation message — just quietly acknowledge and clear it.
             await interaction.delete_original_response()
         except discord.Forbidden:
-            await interaction.followup.send(
+            await say(
+                interaction,
                 "Forgive me — I have not been given leave to speak in that channel.",
-                ephemeral=True,
             )
         except discord.HTTPException as e:
-            await interaction.followup.send(
+            await say(
+                interaction,
                 f"Something went amiss and I could not speak. I am sorry. `({e})`",
-                ephemeral=True,
             )
 
     @text.autocomplete("sticker")

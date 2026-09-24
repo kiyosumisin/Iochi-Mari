@@ -14,7 +14,7 @@ import discord
 from discord import app_commands
 from discord.ext import tasks
 
-from .common import MariCog
+from .common import AdminCog, say
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def comment_embed(c: dict) -> discord.Embed:
     return embed
 
 
-class DatamineCommands(MariCog):
+class DatamineCommands(AdminCog):
     async def cog_load(self):
         self.poll.start()
 
@@ -62,26 +62,21 @@ class DatamineCommands(MariCog):
     )
 
     @datamine_group.command(name="set", description="Choose the channel for datamine notes")
-    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(channel="The channel to post datamine notes in")
     async def datamine_set(self, interaction: discord.Interaction, channel: discord.TextChannel):
         self.bot.guild_settings.set_datamine_channel(interaction.guild.id, channel.id)
-        await interaction.response.send_message(
+        await say(
+            interaction,
             f"Understood. Whenever Discord's builds reveal something new, I will bring "
             f"word of it to {channel.mention}.",
-            ephemeral=True,
         )
 
     @datamine_group.command(name="off", description="Stop posting datamine notes")
-    @app_commands.checks.has_permissions(administrator=True)
     async def datamine_off(self, interaction: discord.Interaction):
         self.bot.guild_settings.set_datamine_channel(interaction.guild.id, 0)
-        await interaction.response.send_message(
-            "Very well. I will keep the datamine notes to myself from now on.", ephemeral=True
-        )
+        await say(interaction, "Very well. I will keep the datamine notes to myself from now on.")
 
     @datamine_group.command(name="status", description="Show where datamine notes are posted")
-    @app_commands.checks.has_permissions(administrator=True)
     async def datamine_status(self, interaction: discord.Interaction):
         cid = self.bot.guild_settings.get_datamine_channel(interaction.guild.id)
         msg = (
@@ -89,7 +84,7 @@ class DatamineCommands(MariCog):
             if cid
             else "I am not posting datamine notes in this server just now."
         )
-        await interaction.response.send_message(msg, ephemeral=True)
+        await say(interaction, msg)
 
     # -- Background poll -----------------------------------------------------
     @tasks.loop(minutes=10)

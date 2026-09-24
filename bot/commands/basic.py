@@ -1,32 +1,13 @@
 """General, public-facing commands: /check, /help, !ping."""
 
 import asyncio
-import time
-from collections import defaultdict
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from core.image_scanner import ocr_image_bytes
-from .common import MariCog, is_owner, OWNER_ONLY_DENIAL
-
-# ---------------------------------------------------------------------------
-# Rate limiter: max 5 uses of /check per user per 60 seconds
-# ---------------------------------------------------------------------------
-_check_rate: dict[int, list[float]] = defaultdict(list)
-_RATE_LIMIT = 5
-_RATE_WINDOW = 60  # seconds
-
-
-def _is_rate_limited(user_id: int) -> bool:
-    now = time.time()
-    timestamps = [t for t in _check_rate[user_id] if now - t < _RATE_WINDOW]
-    _check_rate[user_id] = timestamps
-    if len(timestamps) >= _RATE_LIMIT:
-        return True
-    _check_rate[user_id].append(now)
-    return False
+from .common import MariCog, is_owner, OWNER_ONLY_DENIAL, say
 
 
 def _is_valid_url(url: str) -> bool:
@@ -68,21 +49,14 @@ class BasicCommands(MariCog):
     )
 
     @check_group.command(name="link", description="Check whether a URL is safe or harmful")
+    @app_commands.checks.cooldown(5, 60.0)  # 5 checks per user per minute
     @app_commands.describe(url="The URL you would like me to inspect")
     async def check_link(self, interaction: discord.Interaction, url: str):
-        if _is_rate_limited(interaction.user.id):
-            await interaction.response.send_message(
-                f"Forgive me — you are asking a little quickly, and I cannot quite keep pace. "
-                f"Please allow me {_RATE_WINDOW} seconds to gather myself, then do try again.",
-                ephemeral=True,
-            )
-            return
-
         if not _is_valid_url(url):
-            await interaction.response.send_message(
+            await say(
+                interaction,
                 "I am sorry, but that does not look like a valid link to me. "
                 "Might you make sure it begins with `http://` or `https://`?",
-                ephemeral=True,
             )
             return
 
@@ -99,17 +73,17 @@ class BasicCommands(MariCog):
             embed = _verdict_embed(url, verdict)
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(
+            await say(
+                interaction,
                 f"I am afraid something went amiss while I was looking over that link. "
                 f"Please forgive me. `({e})`",
-                ephemeral=True,
             )
 
     @check_group.command(name="img", description="Read the text inside an image (owner only)")
     @app_commands.describe(image="The image you would like me to read")
     async def check_img(self, interaction: discord.Interaction, image: discord.Attachment):
         if not await is_owner(interaction):
-            await interaction.response.send_message(OWNER_ONLY_DENIAL, ephemeral=True)
+            await say(interaction, OWNER_ONLY_DENIAL)
             return
 
         ctype = image.content_type or ""
@@ -117,10 +91,7 @@ class BasicCommands(MariCog):
             (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
         )
         if not is_image:
-            await interaction.response.send_message(
-                "I am sorry, that does not appear to be an image I can read.",
-                ephemeral=True,
-            )
+            await say(interaction, "I am sorry, that does not appear to be an image I can read.")
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -128,16 +99,14 @@ class BasicCommands(MariCog):
             data = await image.read()
             text = await asyncio.to_thread(ocr_image_bytes, data)
         except Exception as e:
-            await interaction.followup.send(
-                f"Forgive me — I could not read that image. `({e})`", ephemeral=True
-            )
+            await say(interaction, f"Forgive me — I could not read that image. `({e})`")
             return
 
         text = (text or "").strip()
         if not text:
-            await interaction.followup.send(
+            await say(
+                interaction,
                 "I looked closely, but found no readable text within that image.",
-                ephemeral=True,
             )
             return
 

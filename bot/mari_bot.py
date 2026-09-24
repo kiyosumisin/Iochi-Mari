@@ -62,15 +62,6 @@ class MariBot(commands.Bot):
             getattr(self, "application_id", "unknown"),
         )
 
-    async def on_app_command_error(
-        self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError
-    ):
-        logger.warning("App command error: %s", error)
-        if interaction.response.is_done():
-            await interaction.followup.send("Command error. Please try again.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Command error. Please try again.", ephemeral=True)
-
     async def on_message(self, message):
         if message.author.bot:
             return

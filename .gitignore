@@ -8,3 +8,4 @@ venv/
 *.pkl
 data/guild_settings.json
 data/warnings.json
+.venv/

@@ -50,9 +50,24 @@ class MariCog(commands.Cog):
             )
 
         try:
-            if interaction.response.is_done():
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(msg, ephemeral=True)
+            await say(interaction, msg)
         except Exception:
             pass
+
+
+class AdminCog(MariCog):
+    """Every app command in this cog requires Administrator at runtime, on top
+    of default_permissions (which server admins can loosen per command)."""
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.permissions.administrator:
+            return True
+        raise app_commands.MissingPermissions(["administrator"])
+
+
+async def say(interaction: discord.Interaction, msg: str):
+    """Reply privately to the user who ran the command (works before or after defer)."""
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)

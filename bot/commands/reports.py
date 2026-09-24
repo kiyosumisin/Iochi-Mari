@@ -6,15 +6,14 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
-from .common import MariCog
+from .common import AdminCog, say
 
 
-class ReportCommands(MariCog):
+class ReportCommands(AdminCog):
     # -- Stats ---------------------------------------------------------------
     @app_commands.command(name="stats", description="View this server's protection summary")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
     async def stats(self, interaction: discord.Interaction):
         s = self.bot.guild_settings.get_stats(interaction.guild.id)
         embed = discord.Embed(
@@ -34,23 +33,18 @@ class ReportCommands(MariCog):
     # -- Scam catch log ------------------------------------------------------
     @app_commands.command(name="scamlog", description="Show successful scam catches (evidence log)")
     @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
     async def scamlog(self, interaction: discord.Interaction):
         # This file lives at bot/commands/reports.py, so the project root is
         # three levels up.
         path = Path(__file__).resolve().parents[2] / "log" / "scam_catches.csv"
         if not path.exists() or path.stat().st_size == 0:
-            await interaction.response.send_message(
-                "I have caught no scams just yet — may it stay that way.", ephemeral=True
-            )
+            await say(interaction, "I have caught no scams just yet — may it stay that way.")
             return
         try:
             with path.open("r", newline="", encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
         except Exception as e:
-            await interaction.response.send_message(
-                f"I am sorry, I could not read the record. `({e})`", ephemeral=True
-            )
+            await say(interaction, f"I am sorry, I could not read the record. `({e})`")
             return
 
         total = len(rows)
@@ -74,20 +68,15 @@ class ReportCommands(MariCog):
     @app_commands.command(name="why", description="Ask Mari why a user was flagged or actioned")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(user="The member to ask about")
     async def why(self, interaction: discord.Interaction, user: discord.Member):
         agent = getattr(self.bot, "agent", None)
         if not agent or not getattr(agent, "enabled", False):
-            await interaction.response.send_message(
-                "I'm sorry, my analysis assistant is not configured right now.", ephemeral=True
-            )
+            await say(interaction, "I'm sorry, my analysis assistant is not configured right now.")
             return
         record = agent.latest_case_for(interaction.guild.id, user.id)
         if not record:
-            await interaction.response.send_message(
-                f"I have no recorded analysis for **{user}** to draw upon.", ephemeral=True
-            )
+            await say(interaction, f"I have no recorded analysis for **{user}** to draw upon.")
             return
         await interaction.response.defer(thinking=True)
         answer = await agent.answer_why(record)
