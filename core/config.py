@@ -10,6 +10,9 @@ class Config:
         self.VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
         self.URLSCAN_API_KEY = os.getenv("URLSCAN_API_KEY")
         self.ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "0"))
+        # The sole owner who may use owner-only commands (/checkimg, /text).
+        # Defaults to the bot keeper; override with OWNER_ID in .env if needed.
+        self.OWNER_ID = int(os.getenv("OWNER_ID", "849917651786268703") or "0")
         self.GUILD_ID = int(os.getenv("GUILD_ID", "0"))
         self.LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
         self.HONEYPOT_CHANNEL_ID = int(os.getenv("HONEYPOT_CHANNEL_ID", "0") or "0")

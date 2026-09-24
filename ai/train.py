@@ -25,6 +25,7 @@ import os
 import sys
 import warnings
 from pathlib import Path
+from urllib.parse import urlparse
 
 # LightGBM was trained with feature names (DataFrame), but sklearn's internal
 # cross-validation passes raw numpy arrays between pipeline steps — triggering
@@ -52,10 +53,15 @@ from sklearn.metrics import (
     average_precision_score,
     classification_report,
     confusion_matrix,
+    f1_score,
     precision_recall_curve,
     roc_auc_score,
 )
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
+from sklearn.model_selection import (
+    GridSearchCV,
+    StratifiedGroupKFold,
+    cross_val_predict,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -82,6 +88,30 @@ DEFAULT_MODEL_PATH = BASE_DIR / "model.pkl"
 def _get_feature_version(sample_feats: dict) -> str:
     """Fingerprint the feature set by sorted key names (excluding 'url')."""
     return ",".join(sorted(k for k in sample_feats if k != "url"))
+
+
+# Second-level labels that sit under a ccTLD, e.g. "co.uk", "com.vn".
+_SLD_UNDER_CCTLD = {"co", "com", "org", "net", "gov", "edu", "ac", "or", "ne", "go", "gob"}
+
+
+def _registered_domain(url: str) -> str:
+    """
+    Best-effort eTLD+1 (registered domain), used ONLY to group URLs so the same
+    site never lands in both train and test. Not a full public-suffix parse, but
+    enough to prevent domain leakage. IPs group by themselves.
+    """
+    host = (urlparse(url if "://" in url else "http://" + url).hostname or "").lower()
+    if not host:
+        return url  # fall back to the raw string as its own group
+    if host.replace(".", "").isdigit() or ":" in host:  # IPv4 / IPv6
+        return host
+    parts = host.split(".")
+    if len(parts) <= 2:
+        return host
+    # bbc.co.uk / foo.com.vn → keep 3 labels; otherwise keep the last 2.
+    if len(parts[-1]) == 2 and parts[-2] in _SLD_UNDER_CCTLD:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
 
 
 def _load_and_validate_csv(path: Path) -> pd.DataFrame:
@@ -169,27 +199,27 @@ def _param_grid(fast: bool = False) -> dict:
     """
     GridSearchCV search space.
 
-    fast=False (default): 864 combinations — thorough, full CPU, ~20-60 min.
-    fast=True           : 8 combinations   — quick smoke-test, ~2-5 min.
+    fast=False (default): 16 combinations — thorough, ~20-40 min on many cores.
+    fast=True           : 2 combinations  — quick, aimed at the known-good region.
     """
     if fast:
         return {
             "preprocess__url_tfidf__ngram_range": [(3, 5)],
             "preprocess__url_tfidf__min_df": [2],
             "preprocess__url_tfidf__max_features": [5000],
-            "clf__n_estimators": [200],
-            "clf__max_depth": [6, 10],
-            "clf__learning_rate": [0.05, 0.1],
+            "clf__n_estimators": [400],
+            "clf__max_depth": [-1, 10],
+            "clf__learning_rate": [0.05],
             "clf__min_child_samples": [20],
         }
     return {
         # Preprocessing
-        "preprocess__url_tfidf__ngram_range": [(3, 4), (3, 5), (4, 5)],
-        "preprocess__url_tfidf__min_df": [2, 3],
-        "preprocess__url_tfidf__max_features": [3000, 5000, 8000],
+        "preprocess__url_tfidf__ngram_range": [(3, 5), (4, 5)],
+        "preprocess__url_tfidf__min_df": [2],
+        "preprocess__url_tfidf__max_features": [5000, 8000],
         # LightGBM
-        "clf__n_estimators": [200, 400],
-        "clf__max_depth": [6, 10, -1],
+        "clf__n_estimators": [400],
+        "clf__max_depth": [-1, 10],
         "clf__learning_rate": [0.05, 0.1],
         "clf__min_child_samples": [10, 20],
     }
@@ -224,7 +254,7 @@ def _print_evaluation(
 ) -> None:
     """Print confusion matrices, classification reports, and AUC scores."""
     print("\n" + "=" * 60)
-    print("EVALUATION RESULTS")
+    print("EVALUATION RESULTS (domain-disjoint out-of-fold)")
     print("=" * 60)
 
     print("\n--- Confusion Matrix (default threshold=0.5, original labels) ---")
@@ -233,9 +263,9 @@ def _print_evaluation(
     print("\n--- Classification Report (default threshold=0.5) ---")
     print(classification_report(y_test, y_pred_default, digits=4))
 
-    print(f"\n--- Optimised threshold (max-F1) for malicious label={malicious_label}: "
-          f"{best_threshold:.4f} ---")
-    print("Confusion Matrix (optimised threshold, malicious=1):")
+    print(f"\n--- Validation-tuned threshold (max-F1 on out-of-fold) for "
+          f"malicious label={malicious_label}: {best_threshold:.4f} ---")
+    print("Confusion Matrix (tuned threshold, malicious=1):")
     print(confusion_matrix(y_true_binary, y_pred_opt))
 
     print("\nClassification Report (optimised threshold):")
@@ -331,6 +361,13 @@ def main() -> None:
                 before, len(df), len(df) - before,
             )
 
+    # ── De-duplicate exact URLs ───────────────────────────────────────────────
+    # The same URL landing in both train and test is direct leakage.
+    before = len(df)
+    df = df.drop_duplicates(subset="url").reset_index(drop=True)
+    if len(df) < before:
+        logger.info("Dropped %d duplicate URL rows (%d → %d)", before - len(df), before, len(df))
+
     # ── Feature extraction ────────────────────────────────────────────────────
     logger.info("Extracting features (include_page=%s) …", include_page)
     X, y = _extract_features_parallel(df, include_page=include_page)
@@ -338,17 +375,23 @@ def main() -> None:
     feature_version = _get_feature_version(X.iloc[0].to_dict())
     logger.info("Feature set: %d columns | version: %s", len(X.columns), feature_version)
 
-    # ── Train / test split ────────────────────────────────────────────────────
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-    logger.info("Train: %d rows | Test: %d rows", len(X_train), len(X_test))
+    # ── Group-aware, leakage-free evaluation ──────────────────────────────────
+    # The URL string feeds a char-level TF-IDF, so the model can memorise a
+    # hostname. To measure real performance on brand-new domains we group by
+    # eTLD+1 and use group-aware CV everywhere — every score below reflects
+    # domains the model has NEVER seen during training. A single held-out fold
+    # is high-variance here (a few giant domains dominate it), so we report
+    # pooled 5-fold out-of-fold predictions instead.
+    groups = X["url"].map(_registered_domain)
+    g_arr = groups.to_numpy()
 
-    # ── Build pipeline + hyperparameter search ────────────────────────────────
+    malicious_label = int(os.getenv("AI_MALICIOUS_LABEL", "0"))
     numeric_features = [col for col in X.columns if col != "url"]
     pipeline = _build_pipeline(numeric_features)
+    logger.info("Rows: %d | unique registered domains: %d", len(X), groups.nunique())
 
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # ── Hyperparameter search (group-aware CV) ────────────────────────────────
+    cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
     param_grid = _param_grid(fast=args.fast)
     n_combinations = 1
     for v in param_grid.values():
@@ -368,36 +411,53 @@ def main() -> None:
     )
 
     logger.info("Starting GridSearchCV …")
-    search.fit(X_train, y_train)
-    best_model = search.best_estimator_
-    logger.info("Best CV F1 : %.4f", search.best_score_)
+    search.fit(X, y, groups=g_arr)
+    best_model = search.best_estimator_          # refit on ALL rows by GridSearchCV
+    logger.info("Best group-CV F1 : %.4f", search.best_score_)
     logger.info("Best params: %s", search.best_params_)
 
-    # ── Evaluation ────────────────────────────────────────────────────────────
-    malicious_label = int(os.getenv("AI_MALICIOUS_LABEL", "0"))
     classes = list(best_model.classes_)
     mal_idx = (
         classes.index(malicious_label) if malicious_label in classes
         else (1 if len(classes) > 1 else 0)
     )
+    other_label = next((c for c in classes if c != malicious_label), malicious_label)
 
-    y_pred_default = best_model.predict(X_test)
-    y_prob = best_model.predict_proba(X_test)[:, mal_idx]
-    y_true_binary = (y_test == malicious_label).astype(int)
+    # ── Honest metrics + threshold from out-of-fold predictions ───────────────
+    # Each out-of-fold probability comes from a model that never saw that row's
+    # domain, so these numbers estimate real performance on new domains — and the
+    # threshold is tuned here, never on a held-out test set.
+    logger.info("Computing domain-disjoint out-of-fold predictions …")
+    # Run the folds sequentially (n_jobs=1): LightGBM already parallelises each
+    # fit across all cores, so parallelising folds too oversubscribes the CPU and
+    # can crash a worker on deep 400-tree models.
+    oof_prob = cross_val_predict(
+        best_model, X, y, cv=cv, groups=g_arr,
+        method="predict_proba", n_jobs=1,
+    )[:, mal_idx]
 
-    best_threshold, y_pred_opt = _optimise_threshold(y_test, y_prob, malicious_label)
+    y_true_binary = (y == malicious_label).astype(int)
+    best_threshold, y_pred_opt = _optimise_threshold(y, oof_prob, malicious_label)
+    y_pred_default = np.where(oof_prob >= 0.5, malicious_label, other_label)
 
     _print_evaluation(
-        y_test=y_test,
+        y_test=y,
         y_pred_default=y_pred_default,
         y_true_binary=y_true_binary,
         y_pred_opt=y_pred_opt,
-        y_prob=y_prob,
+        y_prob=oof_prob,
         malicious_label=malicious_label,
         best_threshold=best_threshold,
     )
+    oof_metrics = {
+        "roc_auc": round(float(roc_auc_score(y_true_binary, oof_prob)), 6),
+        "pr_auc": round(float(average_precision_score(y_true_binary, oof_prob)), 6),
+        "f1_at_threshold": round(float(f1_score(y_true_binary, y_pred_opt)), 6),
+    }
 
     # ── Save model ────────────────────────────────────────────────────────────
+    # best_model is already refit on every row (GridSearchCV refit=True), so no
+    # data is wasted; the OOF threshold above is kept for deployment.
     args.output.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "model": best_model,
@@ -409,10 +469,16 @@ def main() -> None:
             "include_page": include_page,
             "best_cv_f1": round(float(search.best_score_), 6),
             "best_params": search.best_params_,
+            "eval": "5-fold StratifiedGroupKFold by eTLD+1 (domain-disjoint OOF)",
+            "oof_metrics": oof_metrics,
         },
     }
     joblib.dump(payload, args.output)
-    logger.info("Model saved → %s  (threshold=%.4f)", args.output, best_threshold)
+    logger.info(
+        "Model saved → %s  (threshold=%.4f | OOF ROC-AUC=%.4f PR-AUC=%.4f F1=%.4f)",
+        args.output, best_threshold,
+        oof_metrics["roc_auc"], oof_metrics["pr_auc"], oof_metrics["f1_at_threshold"],
+    )
 
     # ── Quick sanity check ────────────────────────────────────────────────────
     test_url = "http://vip-zone2026.site/login"

@@ -8,7 +8,7 @@ from core.url_evaluator import URLEvaluator
 from core.guild_settings import GuildSettings
 from ai.agent import MariAgent
 from bot.events import MessageHandler
-from bot.commands import BasicCommands, AdminCommands
+from bot.commands import ALL_COGS
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +32,8 @@ class MariBot(commands.Bot):
         self.synced = False
 
     async def setup_hook(self):
-        basic = BasicCommands(self)
-        admin = AdminCommands(self)
-
-        await self.add_cog(basic)
-        await self.add_cog(admin)
+        for cog_cls in ALL_COGS:
+            await self.add_cog(cog_cls(self))
 
         if self.config.GUILD_ID:
             guild = discord.Object(id=self.config.GUILD_ID)

@@ -27,8 +27,8 @@
   },
   "894938982692061244": {
     "stats": {
-      "links_blocked": 9,
-      "auto_bans": 8
+      "links_blocked": 18,
+      "auto_bans": 17
     },
     "violations": {
       "918538108411195482": [
@@ -75,6 +75,69 @@
       "951009041814024212": [
         {
           "timestamp": "2026-06-19 18:02 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "348480558256357378": [
+        {
+          "timestamp": "2026-06-23 08:27 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "751672495438037123": [
+        {
+          "timestamp": "2026-06-23 21:13 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "919103667326562315": [
+        {
+          "timestamp": "2026-06-25 15:28 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "1354523736556048424": [
+        {
+          "timestamp": "2026-06-27 12:38 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "964040089409818684": [
+        {
+          "timestamp": "2026-06-27 16:56 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "1185097647615377473": [
+        {
+          "timestamp": "2026-06-27 17:21 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "866225600816873492": [
+        {
+          "timestamp": "2026-07-04 22:17 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "1389341356781998160": [
+        {
+          "timestamp": "2026-07-11 17:17 UTC",
+          "url": "",
+          "reason": "Honeypot image:scam"
+        }
+      ],
+      "1342507614608818238": [
+        {
+          "timestamp": "2026-07-13 18:42 UTC",
           "url": "",
           "reason": "Honeypot image:scam"
         }

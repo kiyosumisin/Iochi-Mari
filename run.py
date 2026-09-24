@@ -27,3 +27,4 @@ if __name__ == "__main__":
     setup_logging()
     bot = MariBot()
     bot.run(bot.config.TOKEN)
+ 
