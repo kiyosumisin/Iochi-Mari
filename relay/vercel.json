@@ -1,0 +1,4 @@
+{
+  "regions": ["iad1"],
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/proxy?path=$1" }]
+}

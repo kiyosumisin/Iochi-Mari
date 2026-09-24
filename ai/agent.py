@@ -121,7 +121,14 @@ class MariAgent:
 
         if self.enabled:
             try:
-                self._client = genai.Client(api_key=self.api_key)
+                # Optional relay (relay/ folder, deployed on Vercel) for hosts where
+                # Google geo-blocks the Gemini API, e.g. a Hong Kong VPS.
+                relay = os.getenv("GEMINI_BASE_URL")
+                http_options = types.HttpOptions(
+                    base_url=relay,
+                    headers={"x-relay-token": os.getenv("GEMINI_RELAY_TOKEN", "")},
+                ) if relay else None
+                self._client = genai.Client(api_key=self.api_key, http_options=http_options)
                 logger.info("MariAgent enabled (model=%s)", self.model_name)
             except Exception as exc:
                 logger.warning("MariAgent init failed, disabling: %s", exc)
