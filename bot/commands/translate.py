@@ -1,11 +1,13 @@
 """Flag-reaction translation: react to a message with a country flag and Mari
 translates it into that country's language (via the Gemini agent)."""
 
+import asyncio
 import logging
 
 import discord
 from discord.ext import commands
 
+from core.image_scanner import ocr_image_bytes
 from .common import MariCog
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,18 @@ def flag_to_country(emoji: str):
     if len(emoji) == 2 and all(_REGIONAL_A <= ord(ch) <= _REGIONAL_Z for ch in emoji):
         return "".join(chr(ord(ch) - _REGIONAL_A + ord("A")) for ch in emoji)
     return None
+
+
+async def image_text(message) -> str:
+    """OCR text of the message's first image attachment, or ''."""
+    for a in message.attachments:
+        if (a.content_type or "").startswith("image/") and a.size <= 8_000_000:
+            try:
+                return (await asyncio.to_thread(ocr_image_bytes, await a.read())).strip()
+            except Exception as exc:
+                logger.warning("OCR for translation failed: %s", exc)
+                return ""
+    return ""
 
 
 class TranslateCog(MariCog):
@@ -54,6 +68,9 @@ class TranslateCog(MariCog):
         except discord.HTTPException:
             return
         text = message.content.strip()
+        from_image = not text
+        if from_image:
+            text = await image_text(message)
         if not text:
             return
 
@@ -69,8 +86,9 @@ class TranslateCog(MariCog):
         embed.set_author(
             name=message.author.display_name, icon_url=message.author.display_avatar.url
         )
+        source = " (text read from the image)" if from_image else ""
         embed.set_footer(
-            text=f"Translated into {result.get('language', code)} for {payload.member.display_name}"
+            text=f"Translated into {result.get('language', code)}{source} for {payload.member.display_name}"
         )
         try:
             # Embed text never pings, so mentions inside the message stay harmless.
