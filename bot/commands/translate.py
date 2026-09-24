@@ -2,12 +2,13 @@
 translates it into that country's language (via the Gemini agent)."""
 
 import asyncio
+import io
 import logging
 
 import discord
 from discord.ext import commands
+from PIL import Image
 
-from core.image_scanner import ocr_image_bytes
 from .common import MariCog
 
 logger = logging.getLogger(__name__)
@@ -23,16 +24,28 @@ def flag_to_country(emoji: str):
     return None
 
 
-async def image_text(message) -> str:
-    """OCR text of the message's first image attachment, or ''."""
+def shrink_image(data: bytes) -> bytes:
+    """Re-encode as a JPEG of at most 1600px so it fits through the Gemini relay
+    (Vercel caps request bodies at 4.5 MB); Gemini reads text fine at this size."""
+    with Image.open(io.BytesIO(data)) as im:
+        im = im.convert("RGB")
+        im.thumbnail((1600, 1600))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        return buf.getvalue()
+
+
+async def first_image(message):
+    """The message's first image attachment as shrunk JPEG bytes, or None.
+    Gemini reads the picture itself: far cleaner than OCR on phone photos of screens."""
     for a in message.attachments:
-        if (a.content_type or "").startswith("image/") and a.size <= 8_000_000:
+        if (a.content_type or "").startswith("image/") and a.size <= 20_000_000:
             try:
-                return (await asyncio.to_thread(ocr_image_bytes, await a.read())).strip()
+                return await asyncio.to_thread(shrink_image, await a.read())
             except Exception as exc:
-                logger.warning("OCR for translation failed: %s", exc)
-                return ""
-    return ""
+                logger.warning("Could not read image for translation: %s", exc)
+                return None
+    return None
 
 
 class TranslateCog(MariCog):
@@ -68,13 +81,11 @@ class TranslateCog(MariCog):
         except discord.HTTPException:
             return
         text = message.content.strip()
-        from_image = not text
-        if from_image:
-            text = await image_text(message)
-        if not text:
+        image = None if text else await first_image(message)
+        if not text and image is None:
             return
 
-        result = await agent.translate(text[:1500], code)
+        result = await agent.translate(text[:4000], code, image=image)
         if not result:
             self._done.discard(key)  # let a later reaction retry
             return
@@ -86,7 +97,7 @@ class TranslateCog(MariCog):
         embed.set_author(
             name=message.author.display_name, icon_url=message.author.display_avatar.url
         )
-        source = " (text read from the image)" if from_image else ""
+        source = " (text read from the image)" if image is not None else ""
         embed.set_footer(
             text=f"Translated into {result.get('language', code)}{source} for {payload.member.display_name}"
         )
