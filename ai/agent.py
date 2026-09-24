@@ -182,6 +182,9 @@ class MariAgent:
                 logger.warning("Gemini timeout (attempt %d).", attempt + 1)
             except Exception as exc:
                 logger.warning("Gemini error (attempt %d): %s", attempt + 1, exc)
+                code = getattr(exc, "code", None)
+                if isinstance(code, int) and 400 <= code < 500:
+                    return None  # quota/bad request: retrying only burns more quota
             await asyncio.sleep(delay)
             delay *= 2
         return None
