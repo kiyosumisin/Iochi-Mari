@@ -73,8 +73,9 @@ class TranslateCog(MariCog):
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        # ponytail: shares the Gemini quota with scam analysis; add a per-guild
-        # toggle or a separate quota if busy servers start starving it.
+        # Shares the Gemini quota with scam analysis, but agent.translate() keeps
+        # the last 30% of the budget for analysis. ponytail: add a per-guild
+        # on/off switch if a busy server still burns through the rest.
         if payload.guild_id is None or not payload.emoji.is_unicode_emoji():
             return
         code = flag_to_country(payload.emoji.name)

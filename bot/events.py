@@ -7,6 +7,7 @@ from datetime import timedelta, datetime, timezone
 import discord
 import logging
 from core.url_utils import URLUtils
+from core.guild_settings import atomic_write
 from core.image_scanner import ocr_image_bytes, append_ocr_log, scan_ocr_text
 from ai.agent import domain_age_days
 
@@ -107,9 +108,7 @@ class MessageHandler:
 
     def _save_warns(self):
         try:
-            self.warn_file.parent.mkdir(parents=True, exist_ok=True)
-            with self.warn_file.open("w", encoding="utf-8") as f:
-                json.dump(self.warns, f, ensure_ascii=False, indent=2)
+            atomic_write(self.warn_file, json.dumps(self.warns, ensure_ascii=False, indent=2))
         except Exception as exc:
             logger.warning("Failed to save warnings.json: %s", exc)
 

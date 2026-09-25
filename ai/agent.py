@@ -140,24 +140,28 @@ class MariAgent:
             logger.info("MariAgent disabled (no GEMINI_API_KEY / library / AGENT_ENABLED).")
 
     # -- rate-limit gate: reserve one slot or refuse -------------------------
-    async def _reserve_slot(self) -> bool:
+    async def _reserve_slot(self, reserve: float = 0.0) -> bool:
+        """`reserve` keeps that share of the per-minute and per-day budget free for
+        callers that pass less — e.g. translation leaves room for scam analysis."""
         async with self._lock:
             now = time.time()
             while self._minute and now - self._minute[0] > 60:
                 self._minute.popleft()
             while self._day and now - self._day[0] > 86400:
                 self._day.popleft()
-            if len(self._minute) >= self._rpm or len(self._day) >= self._rpd:
+            if (len(self._minute) >= self._rpm * (1 - reserve)
+                    or len(self._day) >= self._rpd * (1 - reserve)):
                 return False
             self._minute.append(now)
             self._day.append(now)
             return True
 
     # -- core call: system instruction + prompt -> text, with retry/timeout --
-    async def _generate(self, system_instruction: str, prompt, *, json_out: bool = False):
+    async def _generate(self, system_instruction: str, prompt, *, json_out: bool = False,
+                        reserve: float = 0.0):
         if not self.enabled:
             return None
-        if not await self._reserve_slot():
+        if not await self._reserve_slot(reserve):
             logger.warning("Gemini rate limit reached — skipping call (fallback).")
             return None
 
@@ -226,7 +230,8 @@ class MariAgent:
             ]
         else:
             prompt = f"Country code: {country_code}\nMessage:\n<<<\n{text}\n>>>"
-        out = await self._generate(TRANSLATE_SYSTEM, prompt, json_out=True)
+        # Translation may not eat the last 30% of the Gemini budget: scam analysis keeps it.
+        out = await self._generate(TRANSLATE_SYSTEM, prompt, json_out=True, reserve=0.3)
         try:
             data = json.loads(out) if out else None
         except ValueError:

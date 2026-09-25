@@ -1,9 +1,19 @@
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def atomic_write(path: Path, text: str):
+    """Write to a temp file then rename over the target, so a crash or power
+    loss mid-write can never leave a truncated file behind."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 class GuildSettings:
@@ -24,9 +34,7 @@ class GuildSettings:
 
     def _save(self):
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("w", encoding="utf-8") as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=2)
+            atomic_write(self.path, json.dumps(self.data, ensure_ascii=False, indent=2))
         except Exception as exc:
             logger.warning("Failed to save guild_settings.json: %s", exc)
 

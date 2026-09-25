@@ -14,6 +14,7 @@ import discord
 from discord import app_commands
 from discord.ext import tasks
 
+from core.guild_settings import atomic_write
 from .common import AdminCog, say
 
 logger = logging.getLogger(__name__)
@@ -124,8 +125,7 @@ class DatamineCommands(AdminCog):
                         except discord.HTTPException as exc:
                             logger.warning("Datamine post failed in #%s: %s", ch, exc)
 
-            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            STATE_FILE.write_text(str(fresh[-1]["id"]))
+            atomic_write(STATE_FILE, str(fresh[-1]["id"]))
         except Exception:
             # Never let one bad poll kill the loop.
             logger.exception("Datamine poll failed")

@@ -20,11 +20,13 @@ def setup_logging():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        handlers=[handler],
+        # stdout too, so `journalctl -u mari` shows the bot's own logs on the VPS.
+        handlers=[handler, logging.StreamHandler()],
     )
 
 if __name__ == "__main__":
     setup_logging()
     bot = MariBot()
-    bot.run(bot.config.TOKEN)
+    # log_handler=None: our root handlers above already cover discord.py's logs.
+    bot.run(bot.config.TOKEN, log_handler=None)
  
