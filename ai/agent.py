@@ -127,12 +127,12 @@ class MariAgent:
         self.enabled = bool(self.api_key) and genai is not None and agent_on
         self._client = None
 
-        # Rate limiting (free tier ~15 RPM / 1500 RPD) + timeout.
+        # Rate limiting (flash-lite free tier: 15 RPM / 500 RPD) + timeout.
         self._lock = asyncio.Lock()
         self._minute: deque[float] = deque()
         self._day: deque[float] = deque()
         self._rpm = int(os.getenv("GEMINI_RPM", "15"))
-        self._rpd = int(os.getenv("GEMINI_RPD", "1500"))
+        self._rpd = int(os.getenv("GEMINI_RPD", "500"))
         self._timeout = float(os.getenv("GEMINI_TIMEOUT", "8"))
 
         if self.enabled:

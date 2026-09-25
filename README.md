@@ -161,7 +161,7 @@ GEMINI_API_KEY=your_key        # optional — enables the borderline-case agent 
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model name (flash-lite: far higher free quota than flash) |
 | `GEMINI_BASE_URL` / `GEMINI_RELAY_TOKEN` | — | Route Gemini calls through the `relay/` Vercel function (needed on hosts Google geo-blocks, e.g. Hong Kong) |
 | `AI_BORDERLINE_LOW` / `AI_BORDERLINE_HIGH` | `0.0` / `0.9` | AI-only phishing verdicts in this band go to the Gemini agent for review instead of an automatic ban |
-| `GEMINI_RPM` / `GEMINI_RPD` | `15` / `1500` | Gemini rate limits (free tier) |
+| `GEMINI_RPM` / `GEMINI_RPD` | `15` / `500` | Gemini rate limits (free tier of gemini-3.5-flash-lite; check ai.dev/rate-limit) |
 | `GEMINI_TIMEOUT` | `8` | Per-call timeout (seconds) before fallback |
 
 `LOG_CHANNEL_ID` and `HONEYPOT_CHANNEL_ID` also exist as env
