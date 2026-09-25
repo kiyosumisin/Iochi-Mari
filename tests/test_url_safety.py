@@ -26,7 +26,6 @@ def test_everyday_links_are_not_punished():
 
 
 def test_real_signals_still_caught():
-    assert H.scan("https://www.xvideos.com/video123") == "adult"
     assert H.scan("https://play-casino.example/slots") == "gambling"
     assert H.scan("https://files.example.com/setup.exe") == "malware"
     assert H.scan("https://cheap.xyz/deal?utm_source=spam") == "scam"
@@ -64,6 +63,13 @@ def test_scam_list_parsing_and_protection():
     # poisoned entries are dropped at refresh time
     assert all(s.is_protected(d) for d in ["discord.com", "vercel.app", "com", "sites.google.com"])
     assert not s.is_protected("evil.vercel.app")
+
+
+def test_ocr_keywords_are_whole_words():
+    from core.image_scanner import scan_ocr_text
+    assert scan_ocr_text("let's play together tonight, something new") is None  # not "eth"
+    assert scan_ocr_text("Please login to continue") == "suspected"              # warn, never ban
+    assert scan_ocr_text("FREE NITRO giveaway - claim now!") == "scam"
 
 
 if __name__ == "__main__":

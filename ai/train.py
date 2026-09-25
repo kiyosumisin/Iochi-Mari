@@ -22,8 +22,12 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import random
+import re
 import sys
+import urllib.request
 import warnings
+import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -54,7 +58,6 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     f1_score,
-    precision_recall_curve,
     roc_auc_score,
 )
 from sklearn.model_selection import (
@@ -66,6 +69,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from ai.feature_extractor import extract_features
+from core.scam_list import OWNED, SOURCES, ScamDomainList, parse_domains
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,6 +84,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_PATH = BASE_DIR / "data" / "urls.csv"
 DEFAULT_FEEDBACK_PATH = BASE_DIR / "feedback.csv"
 DEFAULT_MODEL_PATH = BASE_DIR / "model.pkl"
+FP_TARGET = 0.05  # max out-of-fold false-positive rate allowed when picking the threshold
+TRANCO_URL = "https://tranco-list.eu/top-1m.csv.zip"
+TRANCO_PATH = BASE_DIR / "data" / "tranco.zip"  # gitignored download cache
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +119,40 @@ def _registered_domain(url: str) -> str:
     if len(parts[-1]) == 2 and parts[-2] in _SLD_UNDER_CCTLD:
         return ".".join(parts[-3:])
     return ".".join(parts[-2:])
+
+
+def _family(url: str) -> str:
+    """Group key for CV: letters of the registered name only, so look-alike
+    siblings (discord-nitro1.com, discordnitro2.xyz -> "discordnitro") always
+    land on the same side of a split instead of leaking between train/test."""
+    rd = _registered_domain(url)
+    return re.sub(r"[^a-z]", "", rd.split(".")[0]) or rd
+
+
+def _augmentation_rows(malicious_label: int) -> pd.DataFrame:
+    """Community Discord scam domains (malicious) balanced by an equal number of
+    Tranco top-200k domains (benign), all as bare https://domain/ URLs so the
+    two classes share the same shape and the model can't learn "no path = scam"."""
+    guard = ScamDomainList.__new__(ScamDomainList)
+    guard.protected = set(OWNED)
+    scam = set()
+    for url in SOURCES:
+        scam |= parse_domains(urllib.request.urlopen(url, timeout=60).read().decode("utf-8", "ignore"))
+    scam = {d for d in scam if not guard.is_protected(d)}
+
+    if not TRANCO_PATH.exists():
+        logger.info("Downloading Tranco list → %s", TRANCO_PATH)
+        urllib.request.urlretrieve(TRANCO_URL, TRANCO_PATH)
+    lines = zipfile.ZipFile(TRANCO_PATH).open("top-1m.csv").read().decode().splitlines()
+    pool = [ln.split(",", 1)[1].strip().lower() for ln in lines[:200_000]]
+    pool = [d for d in pool if d not in scam]
+    benign = random.Random(42).sample(pool, min(len(scam), len(pool)))
+
+    logger.info("Augmentation: %d scam domains + %d benign Tranco domains", len(scam), len(benign))
+    return pd.DataFrame(
+        [{"url": f"https://{d}/", "label": malicious_label} for d in sorted(scam)]
+        + [{"url": f"https://{d}/", "label": 1 - malicious_label} for d in benign]
+    )
 
 
 def _load_and_validate_csv(path: Path) -> pd.DataFrame:
@@ -199,48 +240,29 @@ def _param_grid(fast: bool = False) -> dict:
     """
     GridSearchCV search space.
 
-    fast=False (default): 16 combinations — thorough, ~20-40 min on many cores.
-    fast=True           : 2 combinations  — quick, aimed at the known-good region.
+    Regularised on purpose (anti-overfitting): capped depth/leaves, row and
+    column subsampling, L2, large leaves and a TF-IDF min_df that ignores rare
+    n-grams, so the model can't memorise individual domains.
+
+    fast=False (default): 8 combinations.
+    fast=True           : 2 combinations around the validated configuration.
     """
-    if fast:
-        return {
-            "preprocess__url_tfidf__ngram_range": [(3, 5)],
-            "preprocess__url_tfidf__min_df": [2],
-            "preprocess__url_tfidf__max_features": [5000],
-            "clf__n_estimators": [400],
-            "clf__max_depth": [-1, 10],
-            "clf__learning_rate": [0.05],
-            "clf__min_child_samples": [20],
-        }
-    return {
-        # Preprocessing
-        "preprocess__url_tfidf__ngram_range": [(3, 5), (4, 5)],
-        "preprocess__url_tfidf__min_df": [2],
-        "preprocess__url_tfidf__max_features": [5000, 8000],
-        # LightGBM
+    base = {
+        "preprocess__url_tfidf__ngram_range": [(3, 5)],
+        "preprocess__url_tfidf__max_features": [8000],
         "clf__n_estimators": [400],
-        "clf__max_depth": [-1, 10],
-        "clf__learning_rate": [0.05, 0.1],
-        "clf__min_child_samples": [10, 20],
+        "clf__learning_rate": [0.05],
+        "clf__num_leaves": [63],
+        "clf__max_depth": [10],
+        "clf__subsample": [0.8],
+        "clf__subsample_freq": [1],
+        "clf__reg_lambda": [1.0],
     }
-
-
-def _optimise_threshold(
-    y_true: pd.Series,
-    y_prob: np.ndarray,
-    malicious_label: int,
-) -> tuple[float, np.ndarray]:
-    """
-    Find the probability threshold that maximises F1 on the test set.
-    Returns (best_threshold, binary_predictions_at_best_threshold).
-    """
-    y_true_binary = (y_true == malicious_label).astype(int)
-    precision, recall, thresholds = precision_recall_curve(y_true_binary, y_prob)
-    f1 = (2 * precision * recall) / (precision + recall + 1e-12)
-    best_idx = int(f1.argmax())
-    best_threshold = float(thresholds[best_idx]) if best_idx < len(thresholds) else 0.5
-    y_pred_opt = (y_prob >= best_threshold).astype(int)
-    return best_threshold, y_pred_opt
+    if fast:
+        return {**base, "preprocess__url_tfidf__min_df": [5],
+                "clf__colsample_bytree": [0.5], "clf__min_child_samples": [50, 100]}
+    return {**base, "preprocess__url_tfidf__min_df": [5, 10],
+            "clf__colsample_bytree": [0.3, 0.5], "clf__min_child_samples": [50, 100]}
 
 
 def _print_evaluation(
@@ -254,7 +276,7 @@ def _print_evaluation(
 ) -> None:
     """Print confusion matrices, classification reports, and AUC scores."""
     print("\n" + "=" * 60)
-    print("EVALUATION RESULTS (domain-disjoint out-of-fold)")
+    print("EVALUATION RESULTS (family-disjoint out-of-fold)")
     print("=" * 60)
 
     print("\n--- Confusion Matrix (default threshold=0.5, original labels) ---")
@@ -263,7 +285,7 @@ def _print_evaluation(
     print("\n--- Classification Report (default threshold=0.5) ---")
     print(classification_report(y_test, y_pred_default, digits=4))
 
-    print(f"\n--- Validation-tuned threshold (max-F1 on out-of-fold) for "
+    print(f"\n--- FP-capped threshold (from out-of-fold predictions) for "
           f"malicious label={malicious_label}: {best_threshold:.4f} ---")
     print("Confusion Matrix (tuned threshold, malicious=1):")
     print(confusion_matrix(y_true_binary, y_pred_opt))
@@ -315,9 +337,15 @@ def main() -> None:
         "--fast",
         action="store_true",
         default=False,
+        help="Use the small param grid (2 combos vs 8).",
+    )
+    parser.add_argument(
+        "--augment",
+        action="store_true",
+        default=False,
         help=(
-            "Use a smaller param grid (8 combos vs 864). "
-            "Much faster, slightly less optimal. Good for testing."
+            "Add the community Discord scam-domain lists as malicious samples, "
+            "balanced by the same number of Tranco top-200k domains as benign."
         ),
     )
     parser.add_argument(
@@ -368,9 +396,23 @@ def main() -> None:
     if len(df) < before:
         logger.info("Dropped %d duplicate URL rows (%d → %d)", before - len(df), before, len(df))
 
+    malicious_label = int(os.getenv("AI_MALICIOUS_LABEL", "0"))
+    orig_urls = set(df["url"].astype(str).str.strip())
+    if args.augment:
+        df = (
+            pd.concat([df[["url", "label"]], _augmentation_rows(malicious_label)], ignore_index=True)
+            .drop_duplicates(subset="url").reset_index(drop=True)
+        )
+        logger.info("With augmentation: %d rows", len(df))
+
     # ── Feature extraction ────────────────────────────────────────────────────
     logger.info("Extracting features (include_page=%s) …", include_page)
     X, y = _extract_features_parallel(df, include_page=include_page)
+
+    # Real-world path URLs and bare augmentation domains get equal total weight,
+    # so ~80k bare domains can't drown out the ~9k URLs the bot actually sees.
+    is_orig = X["url"].isin(orig_urls).to_numpy()
+    weights = np.where(is_orig, max((~is_orig).sum() / max(is_orig.sum(), 1), 1.0), 1.0)
 
     feature_version = _get_feature_version(X.iloc[0].to_dict())
     logger.info("Feature set: %d columns | version: %s", len(X.columns), feature_version)
@@ -378,17 +420,16 @@ def main() -> None:
     # ── Group-aware, leakage-free evaluation ──────────────────────────────────
     # The URL string feeds a char-level TF-IDF, so the model can memorise a
     # hostname. To measure real performance on brand-new domains we group by
-    # eTLD+1 and use group-aware CV everywhere — every score below reflects
-    # domains the model has NEVER seen during training. A single held-out fold
-    # is high-variance here (a few giant domains dominate it), so we report
-    # pooled 5-fold out-of-fold predictions instead.
-    groups = X["url"].map(_registered_domain)
+    # domain *family* (see _family) and use group-aware CV everywhere — every
+    # score below reflects domain families the model has NEVER seen in training.
+    # A single held-out fold is high-variance here (a few giant families dominate
+    # it), so we report pooled 5-fold out-of-fold predictions instead.
+    groups = X["url"].map(_family)
     g_arr = groups.to_numpy()
 
-    malicious_label = int(os.getenv("AI_MALICIOUS_LABEL", "0"))
     numeric_features = [col for col in X.columns if col != "url"]
     pipeline = _build_pipeline(numeric_features)
-    logger.info("Rows: %d | unique registered domains: %d", len(X), groups.nunique())
+    logger.info("Rows: %d | unique domain families: %d", len(X), groups.nunique())
 
     # ── Hyperparameter search (group-aware CV) ────────────────────────────────
     cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
@@ -411,7 +452,7 @@ def main() -> None:
     )
 
     logger.info("Starting GridSearchCV …")
-    search.fit(X, y, groups=g_arr)
+    search.fit(X, y, groups=g_arr, clf__sample_weight=weights)
     best_model = search.best_estimator_          # refit on ALL rows by GridSearchCV
     logger.info("Best group-CV F1 : %.4f", search.best_score_)
     logger.info("Best params: %s", search.best_params_)
@@ -433,11 +474,21 @@ def main() -> None:
     # can crash a worker on deep 400-tree models.
     oof_prob = cross_val_predict(
         best_model, X, y, cv=cv, groups=g_arr,
-        method="predict_proba", n_jobs=1,
+        method="predict_proba", n_jobs=1, params={"clf__sample_weight": weights},
     )[:, mal_idx]
 
     y_true_binary = (y == malicious_label).astype(int)
-    best_threshold, y_pred_opt = _optimise_threshold(y, oof_prob, malicious_label)
+    # Threshold: the lowest cut-off whose out-of-fold false-positive rate stays
+    # <= FP_TARGET on benign real-world URLs *and* benign bare domains. A false
+    # positive here means banning an innocent member, so this beats max-F1.
+    benign = (y != malicious_label).to_numpy()
+    def fp_at(t):
+        return max((oof_prob[benign & m] >= t).mean() for m in (is_orig, ~is_orig) if (benign & m).any())
+    ok = [t for t in np.linspace(0.05, 0.99, 95) if fp_at(t) <= FP_TARGET]
+    best_threshold = float(min(ok)) if ok else 0.99
+    y_pred_opt = (oof_prob >= best_threshold).astype(int)
+    logger.info("Threshold %.2f keeps OOF false positives <= %.0f%% (worst group: %.2f%%)",
+                best_threshold, FP_TARGET * 100, fp_at(best_threshold) * 100)
     y_pred_default = np.where(oof_prob >= 0.5, malicious_label, other_label)
 
     _print_evaluation(
@@ -469,7 +520,9 @@ def main() -> None:
             "include_page": include_page,
             "best_cv_f1": round(float(search.best_score_), 6),
             "best_params": search.best_params_,
-            "eval": "5-fold StratifiedGroupKFold by eTLD+1 (domain-disjoint OOF)",
+            "eval": "5-fold StratifiedGroupKFold by domain family (family-disjoint OOF)",
+            "threshold_rule": f"lowest t with OOF FP <= {FP_TARGET:.0%} on benign URLs and bare domains",
+            "augmented": args.augment,
             "oof_metrics": oof_metrics,
         },
     }

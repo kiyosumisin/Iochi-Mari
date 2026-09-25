@@ -1,5 +1,5 @@
-"""Per-server configuration commands: adult channels, whitelist, honeypot,
-log channel and detection threshold."""
+"""Per-server configuration commands: whitelist, honeypot, log channel,
+datamine feed and detection threshold."""
 
 import discord
 from discord import app_commands
@@ -8,50 +8,6 @@ from .common import AdminCog, say
 
 
 class ConfigCommands(AdminCog):
-    # -- Adult channel group -------------------------------------------------
-    adult_group = app_commands.Group(
-        name="adultchannel",
-        description="Manage channels designated for adult content",
-        default_permissions=discord.Permissions(administrator=True),
-        guild_only=True,
-    )
-
-    @adult_group.command(name="add", description="Designate a channel for adult content")
-    @app_commands.describe(channel="The channel to designate")
-    async def adult_add(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        self.bot.guild_settings.add_adult_channel(interaction.guild.id, channel.id)
-        await say(
-            interaction,
-            f"Understood. I have set {channel.mention} aside for such content, "
-            f"and will permit it there from now on.",
-        )
-
-    @adult_group.command(name="remove", description="Remove a channel from the designated list")
-    @app_commands.describe(channel="The channel to remove")
-    async def adult_remove(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        self.bot.guild_settings.remove_adult_channel(interaction.guild.id, channel.id)
-        await say(interaction, f"Noted. I have removed {channel.mention} from that list.")
-
-    @adult_group.command(name="list", description="View all designated adult channels")
-    async def adult_list(self, interaction: discord.Interaction):
-        channel_ids = self.bot.guild_settings.get_adult_channels(interaction.guild.id)
-        if not channel_ids:
-            await say(interaction, "It seems no channels have been set aside yet.")
-            return
-        mentions = [f"<#{cid}>" for cid in sorted(channel_ids)]
-        await say(
-            interaction,
-            "These are the channels I have set aside for such content:\n" + ", ".join(mentions),
-        )
-
-    @adult_group.command(name="clear", description="Clear all designated adult channels")
-    async def adult_clear(self, interaction: discord.Interaction):
-        self.bot.guild_settings.clear_adult_channels(interaction.guild.id)
-        await say(
-            interaction,
-            "I have cleared that list, and will watch over every channel alike from now on.",
-        )
-
     # -- Whitelist group -----------------------------------------------------
     whitelist_group = app_commands.Group(
         name="whitelist",
@@ -178,7 +134,7 @@ class ConfigCommands(AdminCog):
     @app_commands.command(name="threshold", description="Adjust the detection sensitivity (0.0-1.0)")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(value="A value between 0.0 and 1.0 (default: 0.5)")
+    @app_commands.describe(value="A value between 0.0 and 1.0 (default: the model's own tuned threshold)")
     async def threshold(self, interaction: discord.Interaction, value: float):
         if not (0.0 <= value <= 1.0):
             await say(

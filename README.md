@@ -1,7 +1,7 @@
 # Mari — Discord Anti-Scam Bot
 
 Mari is a Discord moderation bot that automatically detects and acts on malicious,
-phishing, scam, adult and gambling content — using heuristics, an AI URL classifier,
+phishing, scam and gambling content — using heuristics, an AI URL classifier,
 external threat intelligence, web-page analysis and image OCR.
 
 It is themed after **Iochi Mari** from *Blue Archive* (a gentle Sister of Trinity's
@@ -35,14 +35,14 @@ Sisterhood), so all of the bot's messages speak in her calm, caring voice.
 For each link, `core/url_evaluator.py` runs (in order): cache check → short-URL
 resolution → whitelist/blacklist → heuristic scan → AI classifier → (in parallel)
 content scan + Google Safe Browsing + VirusTotal. The strongest verdict wins:
-`malware`/`phishing` > `adult`/`gambling`/`scam` > `safe`.
+`malware`/`phishing` > `gambling`/`scam` > `safe`.
 
 Actions taken:
 
 | Verdict | Action |
 |---|---|
 | malware / phishing / scam | delete message + ban |
-| adult / gambling | delete + escalating timeout (warn 1–5, then ban) |
+| gambling | delete + escalating timeout (warn 1–5, then ban) |
 | scam image (OCR) | delete + ban |
 
 When a **honeypot channel** is set, the bot moderates **only** that channel: a scam
@@ -152,19 +152,19 @@ GEMINI_API_KEY=your_key        # optional — enables the borderline-case agent 
 | `OCR_LANG` | `eng` | Tesseract language(s), e.g. `vie+eng` |
 | `TESSERACT_CMD` | auto | Path to the `tesseract` binary |
 | `AI_THRESHOLD` | model | Decision threshold for the AI classifier |
-| `AI_SCAM_THRESHOLD` | `0.3` | Lower bound to tag a borderline URL as `scam` |
-| `AI_OVERRIDE_THRESHOLD` | `0.9` | AI may override an adult/gambling verdict above this probability |
+| `AI_OVERRIDE_THRESHOLD` | `0.9` | At or above this, an AI phishing verdict is acted on directly (also overrides a gambling tag) |
 | `AI_ENABLE_SHAP` | `false` | Build SHAP explanations (heavy; only needed for `app.py`) |
 | `AI_MODEL_PATH` | `ai/model.pkl` | Custom model path |
-| `TIMEOUT_DURATIONS` | `10m,1h,6h,1d,3d` | Escalating timeout ladder for adult/gambling |
+| `TIMEOUT_DURATIONS` | `10m,1h,6h,1d,3d` | Escalating timeout ladder for gambling |
 | `HONEYPOT_WARN_LIMIT` | `3` | Honeypot warnings before a ban |
 | `AGENT_ENABLED` | `true` | Master switch for the Gemini agent (also needs `GEMINI_API_KEY`) |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model name |
-| `AI_BORDERLINE_LOW` / `AI_BORDERLINE_HIGH` | `0.4` / `0.7` | Probability band treated as borderline |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model name (flash-lite: far higher free quota than flash) |
+| `GEMINI_BASE_URL` / `GEMINI_RELAY_TOKEN` | — | Route Gemini calls through the `relay/` Vercel function (needed on hosts Google geo-blocks, e.g. Hong Kong) |
+| `AI_BORDERLINE_LOW` / `AI_BORDERLINE_HIGH` | `0.0` / `0.9` | AI-only phishing verdicts in this band go to the Gemini agent for review instead of an automatic ban |
 | `GEMINI_RPM` / `GEMINI_RPD` | `15` / `1500` | Gemini rate limits (free tier) |
 | `GEMINI_TIMEOUT` | `8` | Per-call timeout (seconds) before fallback |
 
-`LOG_CHANNEL_ID`, `HONEYPOT_CHANNEL_ID` and `ADULT_CHANNEL_IDS` also exist as env
+`LOG_CHANNEL_ID` and `HONEYPOT_CHANNEL_ID` also exist as env
 fallbacks, but prefer the per-server slash commands — they work correctly across
 multiple servers.
 
@@ -199,7 +199,6 @@ multiple servers.
 | `/scamlog` | Show successful scam catches + attach the evidence CSV |
 | `/honeypot set #channel \| off \| status` | Manage the bait channel |
 | `/logchannel set #channel \| off \| status` | Choose where moderation logs are sent |
-| `/adultchannel add \| remove \| list \| clear` | Channels where adult content is allowed |
 | `/whitelist add \| remove \| list` | Trusted domains that skip scanning |
 | `/why <user>` | Ask the Gemini agent why a user was flagged/actioned (from the case log) |
 

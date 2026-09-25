@@ -9,3 +9,4 @@ venv/
 data/guild_settings.json
 data/warnings.json
 .venv/
+ai/data/tranco.zip

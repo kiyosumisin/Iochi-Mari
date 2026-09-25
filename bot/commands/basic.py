@@ -20,7 +20,7 @@ def _verdict_embed(url: str, verdict: str) -> discord.Embed:
         color = discord.Color.red()
         label = f"Harmful ({verdict})"
         footer = "I have quietly taken this link away to keep everyone safe. Please take care of yourself."
-    elif verdict in ("adult", "gambling"):
+    elif verdict == "gambling":
         color = discord.Color.orange()
         label = f"Flagged ({verdict})"
         footer = "This one may not belong here. Let us be considerate of one another, if you would."
@@ -157,7 +157,6 @@ class BasicCommands(MariCog):
                 "`/honeypot set #channel` / `off` / `status` — Manage the bait channel\n"
                 "`/logchannel set #channel` / `off` / `status` — Where I send moderation logs\n"
                 "`/datamine set #channel` / `off` / `status` — Post new Discord datamine notes\n"
-                "`/adultchannel add` / `remove` / `list` / `clear` — Channels allowed adult content\n"
                 "`/whitelist add` / `remove` / `list` — Trusted domains (skip scanning)\n"
                 "`/threshold <0.0-1.0>` — Adjust detection sensitivity"
             ),

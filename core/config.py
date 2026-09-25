@@ -19,14 +19,15 @@ class Config:
 
         # Gemini agent layer (borderline-case analysis)
         self.GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-        self.GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
         self.AGENT_ENABLED = os.getenv("AGENT_ENABLED", "true").lower() in ("1", "true", "yes")
-        self.AI_BORDERLINE_LOW = float(os.getenv("AI_BORDERLINE_LOW", "0.4") or "0.4")
-        self.AI_BORDERLINE_HIGH = float(os.getenv("AI_BORDERLINE_HIGH", "0.7") or "0.7")
-        raw_adult_channels = os.getenv("ADULT_CHANNEL_IDS", "").strip()
-        self.ADULT_CHANNEL_IDS = [
-            int(x) for x in raw_adult_channels.split(",") if x.strip().isdigit()
-        ]
+        # An AI-only phishing verdict (no blacklist/scanner evidence) below HIGH is
+        # sent to the Gemini agent for review instead of an automatic ban; at or
+        # above HIGH (= AI_OVERRIDE_THRESHOLD by default) the model is confident.
+        self.AI_BORDERLINE_LOW = float(os.getenv("AI_BORDERLINE_LOW", "0.0") or "0.0")
+        self.AI_BORDERLINE_HIGH = float(
+            os.getenv("AI_BORDERLINE_HIGH", os.getenv("AI_OVERRIDE_THRESHOLD", "0.9")) or "0.9"
+        )
 
         if not self.TOKEN:
             raise RuntimeError("DISCORD_TOKEN is missing")

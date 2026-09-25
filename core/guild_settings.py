@@ -45,30 +45,6 @@ class GuildSettings:
             self.data[key] = {}
         return self.data[key]
 
-    # ── Adult channels ──────────────────────────────────────────────────────
-
-    def get_adult_channels(self, guild_id: int) -> set[int]:
-        channels = self._guild(guild_id).get("adult_channel_ids", [])
-        return {int(x) for x in channels if str(x).isdigit()}
-
-    def set_adult_channels(self, guild_id: int, channel_ids: list[int]):
-        self._guild(guild_id)["adult_channel_ids"] = channel_ids
-        self._save()
-
-    def add_adult_channel(self, guild_id: int, channel_id: int):
-        channels = self.get_adult_channels(guild_id)
-        channels.add(channel_id)
-        self.set_adult_channels(guild_id, sorted(channels))
-
-    def remove_adult_channel(self, guild_id: int, channel_id: int):
-        channels = self.get_adult_channels(guild_id)
-        if channel_id in channels:
-            channels.remove(channel_id)
-            self.set_adult_channels(guild_id, sorted(channels))
-
-    def clear_adult_channels(self, guild_id: int):
-        self.set_adult_channels(guild_id, [])
-
     # ── Whitelist ───────────────────────────────────────────────────────────
 
     def get_whitelist(self, guild_id: int) -> set[str]:
@@ -146,8 +122,10 @@ class GuildSettings:
 
     # ── Threshold ───────────────────────────────────────────────────────────
 
-    def get_threshold(self, guild_id: int) -> float:
-        return float(self._guild(guild_id).get("threshold", 0.5))
+    def get_threshold(self, guild_id: int):
+        """The server's /threshold override, or None to use the model's tuned threshold."""
+        val = self._guild(guild_id).get("threshold")
+        return float(val) if val is not None else None
 
     def set_threshold(self, guild_id: int, value: float):
         self._guild(guild_id)["threshold"] = value
@@ -168,6 +146,6 @@ class GuildSettings:
             "links_blocked":  stats.get("links_blocked", 0),
             "auto_bans":      stats.get("auto_bans", 0),
             "warnings":       stats.get("warnings", 0),
-            "threshold":      guild.get("threshold", 0.5),
+            "threshold":      guild.get("threshold"),  # None = model's tuned threshold
             "whitelist_count": len(guild.get("whitelist", [])),
         }

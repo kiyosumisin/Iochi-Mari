@@ -111,7 +111,7 @@ class URLEvaluator:
         if heur:
             verdicts.append(heur)
             sources.append(f"heuristic:{heur}")
-        has_soft_category = heur in ("adult", "gambling")
+        has_soft_category = heur == "gambling"
 
         try:
             prediction = await asyncio.to_thread(predict_url, url, threshold=threshold)
@@ -122,15 +122,11 @@ class URLEvaluator:
                 for f in prediction.top_features
             ]
             override_threshold = float(os.getenv("AI_OVERRIDE_THRESHOLD", "0.9"))
-            if is_malicious:
-                if (not has_soft_category) or probability >= override_threshold:
-                    verdicts.append("phishing")
-                    sources.append(f"ai:phishing:{probability:.4f}")
-            else:
-                scam_threshold = float(os.getenv("AI_SCAM_THRESHOLD", "0.3"))
-                if (not has_soft_category) and probability >= scam_threshold:
-                    verdicts.append("scam")
-                    sources.append(f"ai:scam:{probability:.4f}")
+            # The model's tuned threshold is the only AI cut-off. (A former extra
+            # "scam" tier at p >= 0.3 turned far more ordinary links into bans.)
+            if is_malicious and ((not has_soft_category) or probability >= override_threshold):
+                verdicts.append("phishing")
+                sources.append(f"ai:phishing:{probability:.4f}")
         except Exception as exc:
             logger.warning("AI prediction failed: %s", exc)
 
@@ -162,7 +158,7 @@ class URLEvaluator:
             if v in ("malware", "phishing"):
                 final = v
                 break
-            if v in ("adult", "gambling", "scam"):
+            if v in ("gambling", "scam"):
                 final = v
 
         logger.info(

@@ -25,7 +25,12 @@ class ReportCommands(AdminCog):
         embed.add_field(name="Links Blocked", value=str(s.get("links_blocked", 0)), inline=True)
         embed.add_field(name="Auto Bans", value=str(s.get("auto_bans", 0)), inline=True)
         embed.add_field(name="Warnings Issued", value=str(s.get("warnings", 0)), inline=True)
-        embed.add_field(name="Detection Sensitivity", value=f"`{s.get('threshold', 0.5):.2f}`", inline=True)
+        t = s.get("threshold")
+        embed.add_field(
+            name="Detection Sensitivity",
+            value=f"`{t:.2f}`" if t is not None else "Model default",
+            inline=True,
+        )
         embed.add_field(name="Trusted Domains", value=str(s.get("whitelist_count", 0)), inline=True)
         embed.set_footer(text="I will keep watching over everyone here, with all my heart.")
         await interaction.response.send_message(embed=embed, ephemeral=True)

@@ -2,13 +2,12 @@
 translates it into that country's language (via the Gemini agent)."""
 
 import asyncio
-import io
 import logging
 
 import discord
 from discord.ext import commands
-from PIL import Image
 
+from core.image_scanner import shrink_image
 from .common import MariCog
 
 logger = logging.getLogger(__name__)
@@ -40,17 +39,6 @@ def split_text(text: str, limit: int = 4000) -> list[str]:
         text = text[cut:].lstrip()
     chunks.append(text)
     return chunks
-
-
-def shrink_image(data: bytes) -> bytes:
-    """Re-encode as a JPEG of at most 1600px so it fits through the Gemini relay
-    (Vercel caps request bodies at 4.5 MB); Gemini reads text fine at this size."""
-    with Image.open(io.BytesIO(data)) as im:
-        im = im.convert("RGB")
-        im.thumbnail((1600, 1600))
-        buf = io.BytesIO()
-        im.save(buf, "JPEG", quality=85)
-        return buf.getvalue()
 
 
 async def first_image(message):

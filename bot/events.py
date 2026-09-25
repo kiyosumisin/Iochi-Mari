@@ -1,17 +1,27 @@
 import os
 import csv
 import json
+import time
 import asyncio
+from collections import deque
 from pathlib import Path
 from datetime import timedelta, datetime, timezone
 import discord
 import logging
 from core.url_utils import URLUtils
 from core.guild_settings import atomic_write
-from core.image_scanner import ocr_image_bytes, append_ocr_log, scan_ocr_text
+from core.image_scanner import ocr_image_bytes, append_ocr_log, scan_ocr_text, shrink_image
 from ai.agent import domain_age_days
 
 logger = logging.getLogger(__name__)
+
+# Scam bots blast the same post across many channels at once; a member who
+# posts in the honeypot by mistake doesn't. Posting media/links in the honeypot
+# plus SPAM_CHANNELS-1 other channels within SPAM_WINDOW_S seconds is a ban.
+SPAM_WINDOW_S = 120
+SPAM_CHANNELS = 3
+# Gemini must be at least this sure an honeypot image is a scam to ban on it.
+SCAM_IMAGE_CONFIDENCE = 0.8
 
 
 def _log_page_content(url: str, verdict: str) -> None:
@@ -94,6 +104,26 @@ class MessageHandler:
             "10m,1h,6h,1d,3d"
         ).split(",")
         self.honeypot_warn_limit = int(os.getenv("HONEYPOT_WARN_LIMIT", "3"))
+        self._media_posts: dict[int, deque] = {}  # user id -> (time, channel id) of media/link posts
+        self._banned_recently: dict[int, float] = {}  # user id -> ban time, one ban per burst
+
+    def _note_media_post(self, message) -> set[int]:
+        """Record a media/link post and return the channels this author posted
+        media/links in during the last SPAM_WINDOW_S seconds."""
+        now = time.time()
+        posts = self._media_posts.setdefault(message.author.id, deque(maxlen=20))
+        if message.attachments or URLUtils.extract_urls(message.content or ""):
+            posts.append((now, message.channel.id))
+        while posts and now - posts[0][0] > SPAM_WINDOW_S:
+            posts.popleft()
+        if len(self._media_posts) > 5000:  # forget idle users
+            self._media_posts = {u: d for u, d in self._media_posts.items() if d and now - d[-1][0] <= SPAM_WINDOW_S}
+        return {ch for _, ch in posts}
+
+    @staticmethod
+    def _is_admin(author) -> bool:
+        perms = getattr(author, "guild_permissions", None)
+        return perms is not None and perms.administrator
 
     def _load_warns(self):
         try:
@@ -203,9 +233,9 @@ class MessageHandler:
         hard = ("blacklist" in sources) or any(str(s).startswith("scanner:") for s in sources)
         if hard:
             return False
-        low = float(getattr(self.config, "AI_BORDERLINE_LOW", 0.4))
-        high = float(getattr(self.config, "AI_BORDERLINE_HIGH", 0.7))
-        return low <= prob <= high
+        low = float(getattr(self.config, "AI_BORDERLINE_LOW", 0.0))
+        high = float(getattr(self.config, "AI_BORDERLINE_HIGH", 0.9))
+        return low <= prob < high
 
     async def _recent_messages(self, message, author, limit: int = 5):
         out = []
@@ -461,33 +491,54 @@ class MessageHandler:
             if verdict not in ("safe", "none"):
                 return True, f"link:{verdict}", url
 
+        agent = self.agent if getattr(self.agent, "enabled", False) else None
         ocr_enabled = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
-        if ocr_enabled:
-            for att in message.attachments:
-                if not self._is_image_attachment(att):
+        for att in message.attachments:
+            if not self._is_image_attachment(att):
+                continue
+            try:
+                raw = await att.read()
+                # Gemini looks at the picture itself — far better than OCR on
+                # screenshots of fake Nitro/Steam pages. Honeypot posts are rare,
+                # so this costs almost no quota.
+                if agent:
+                    res = await agent.classify_scam_image(await asyncio.to_thread(shrink_image, raw))
+                    if res is not None:
+                        logger.info("Honeypot Gemini image check | %s | %s", att.filename, res)
+                        if res["scam"] and float(res.get("confidence") or 0) >= SCAM_IMAGE_CONFIDENCE:
+                            return True, "image:gemini", f"{att.filename}: {res.get('reason', '')}"
+                        continue  # judged not (clearly) a scam -> the warning path
+                if not ocr_enabled:
                     continue
-                try:
-                    raw = await att.read()
-                    text = await asyncio.to_thread(ocr_image_bytes, raw)
-                    if text and text.strip():
-                        verdict = scan_ocr_text(text)
-                        append_ocr_log(
-                            text,
-                            source=f"honeypot:{message.id}:{att.filename}",
-                            verdict=verdict,
-                        )
-                        if verdict in ("scam", "suspected"):
-                            return True, f"image:{verdict}", att.filename
-                except Exception as exc:
-                    logger.warning(
-                        "Honeypot OCR failed | attachment=%s | error=%s",
-                        att.filename, exc,
+                # Fallback when Gemini is unavailable: OCR + whole-word phrases.
+                text = await asyncio.to_thread(ocr_image_bytes, raw)
+                if text and text.strip():
+                    verdict = scan_ocr_text(text)
+                    append_ocr_log(
+                        text,
+                        source=f"honeypot:{message.id}:{att.filename}",
+                        verdict=verdict,
                     )
+                    if verdict == "scam":  # a single phrase ("suspected") only warns
+                        return True, "image:scam", att.filename
+            except Exception as exc:
+                logger.warning(
+                    "Honeypot image check failed | attachment=%s | error=%s",
+                    att.filename, exc,
+                )
         return False, "", ""
 
     async def _honeypot_ban(self, message, reason: str, already_deleted: bool = False, catch=None):
         guild = message.guild
         author = message.author
+        # A spam burst can reach here from several messages at once: act once
+        # per burst (time-based, so a later /unban + re-offence is still handled).
+        now = time.time()
+        if now - self._banned_recently.get(author.id, 0) < 60:
+            return
+        if len(self._banned_recently) > 1000:
+            self._banned_recently = {u: t for u, t in self._banned_recently.items() if now - t < 60}
+        self._banned_recently[author.id] = now
         if not already_deleted:
             try:
                 await message.delete()
@@ -518,22 +569,24 @@ class MessageHandler:
             f"Reason: `{reason}`\n{action}\nPlease rest easy, everyone — I am keeping watch over this place.",
         )
 
-    async def _handle_honeypot(self, message):
+    async def _handle_honeypot(self, message, spread=frozenset()):
         """
         Real members are told not to post in the honeypot channel.
-          - A scam link/image -> instant ban (assumed scam bot).
-          - Any other post     -> delete + escalating warning; ban once the
-                                   warning limit is exceeded.
+          - A clear scam link/image, or the same media/link burst across
+            several channels            -> instant ban (assumed scam bot).
+          - Any other post              -> delete + escalating warning; ban
+                                           once the warning limit is exceeded.
         Admins are never punished here.
         """
         author = message.author
 
-        perms = getattr(author, "guild_permissions", None)
-        if perms is not None and perms.administrator:
+        if self._is_admin(author):
             logger.info("Honeypot post from admin %s — ignored.", author)
             return
 
         is_scam, category, detail = await self._honeypot_detect_scam(message)
+        if not is_scam and len(spread) >= SPAM_CHANNELS:
+            is_scam, category, detail = True, "spread", f"{len(spread)} channels in {SPAM_WINDOW_S}s"
         if is_scam:
             await self._honeypot_ban(
                 message,
@@ -581,8 +634,18 @@ class MessageHandler:
         # over-eager verdict can never cause a wrongful ban elsewhere.
         honeypot_id = self._honeypot_channel_id(guild)
         if honeypot_id:
+            spread = self._note_media_post(message)
             if message.channel.id == honeypot_id:
-                await self._handle_honeypot(message)
+                await self._handle_honeypot(message, spread)
+            elif (honeypot_id in spread and len(spread) >= SPAM_CHANNELS
+                  and not self._is_admin(message.author)):
+                # The honeypot post came first (and was only warned); the same
+                # burst is now landing in other channels too -> scam bot.
+                await self._honeypot_ban(
+                    message,
+                    reason=f"Honeypot: same post spread across {len(spread)} channels",
+                    catch=("spread", f"{len(spread)} channels in {SPAM_WINDOW_S}s"),
+                )
             return
 
         guild_threshold = (
@@ -603,13 +666,6 @@ class MessageHandler:
             verdict = detail["verdict"]
 
             self._stat(guild, "urls_scanned")
-
-            if verdict == "adult" and guild:
-                allowed_channels = set(self.config.ADULT_CHANNEL_IDS)
-                if self.guild_settings:
-                    allowed_channels = self.guild_settings.get_adult_channels(guild.id)
-                if message.channel.id in allowed_channels:
-                    continue
 
             logger.info(
                 "URL checked | user=%s | url=%s | domain=%s | verdict=%s",
@@ -647,7 +703,7 @@ class MessageHandler:
                         f"I take no joy in it; I only wish to keep everyone here safe.",
                     )
 
-                elif verdict in ("adult", "gambling"):
+                elif verdict == "gambling":
                     await message.delete()
                     self._stat(guild, "links_blocked")
                     warn_count = self._add_warn(message.author.id)
@@ -714,7 +770,9 @@ class MessageHandler:
                     )
 
                     # ── Scam image: xoá + ban + log ──────────────────────
-                    if verdict in ("scam", "suspected"):
+                    # Only a clear match (2+ scam phrases); one phrase such as
+                    # "login" on an ordinary screenshot is no reason to ban.
+                    if verdict == "scam":
                         await self._handle_scam_image(
                             message=message,
                             verdict=verdict,

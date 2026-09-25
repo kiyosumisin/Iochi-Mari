@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import logging
 from pathlib import Path
 
@@ -124,11 +125,27 @@ def append_ocr_log(text: str, source: str, verdict: str | None = None):
         f.write(f"{text.strip()}\n---\n")
 
 
+_SCAM_PATTERNS = [re.compile(rf"\b{re.escape(k)}\b") for k in SCAM_KEYWORDS]
+
+
 def scan_ocr_text(text: str) -> str | None:
+    """'scam' for 2+ scam phrases, 'suspected' for one (callers must not ban on
+    that alone), else None. Whole-word matching: "eth" no longer hits "together"."""
     lowered = text.lower()
-    hits = [k for k in SCAM_KEYWORDS if k in lowered]
-    if len(hits) >= 2:
+    hits = sum(1 for p in _SCAM_PATTERNS if p.search(lowered))
+    if hits >= 2:
         return "scam"
-    if len(hits) == 1:
+    if hits == 1:
         return "suspected"
     return None
+
+
+def shrink_image(data: bytes) -> bytes:
+    """Re-encode as a JPEG of at most 1600px: small enough for the Gemini relay
+    (Vercel caps request bodies at 4.5 MB), still plenty for Gemini to read text."""
+    with Image.open(io.BytesIO(data)) as im:
+        im = im.convert("RGB")
+        im.thumbnail((1600, 1600))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        return buf.getvalue()

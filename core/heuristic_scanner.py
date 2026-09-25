@@ -25,7 +25,6 @@ _LURE_OFFICIAL = {
 
 
 class HeuristicScanner:
-    ADULT = {"porn", "sex", "xxx", "hentai", "xnxx", "xvideos"}
     GAMBLING = {"casino", "bet", "gamble", "jackpot", "poker", "ball88", "188bet", "12bet", "sbobet", "maxbet"}
     # "rat" and "exploit" dropped: they matched everyday words and banned people.
     MALWARE_KEYWORDS = {"malware", "stealer", "keylogger", "trojan", "botnet"}
@@ -48,8 +47,6 @@ class HeuristicScanner:
         if domain.endswith(cls.SUSPICIOUS_TLDS) and any(p in decoded for p in cls.AFFILIATE_PATTERNS):
             return "scam"
 
-        if tokens & cls.ADULT:
-            return "adult"
         if tokens & cls.GAMBLING:
             return "gambling"
 
