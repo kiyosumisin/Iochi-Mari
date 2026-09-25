@@ -1,7 +1,7 @@
 import discord
 import asyncio
 import logging
-from discord.ext import commands
+from discord.ext import commands, tasks
 from core.config import Config
 from core.external_scanners import ExternalScanners
 from core.url_evaluator import URLEvaluator
@@ -45,6 +45,7 @@ class MariBot(commands.Bot):
             logger.info("Synced global app commands")
 
         self.synced = True
+        self.refresh_scam_list.start()
 
         # Pre-load the URL model so the first scan doesn't block on a cold start.
         try:
@@ -53,6 +54,14 @@ class MariBot(commands.Bot):
             logger.info("URL model pre-loaded.")
         except Exception as exc:
             logger.warning("Could not pre-load URL model: %s", exc)
+
+    @tasks.loop(hours=12)
+    async def refresh_scam_list(self):
+        """Pull the community Discord scam-domain lists (first run at startup)."""
+        try:
+            await self.evaluator.scam_list.refresh()
+        except Exception:
+            logger.exception("Scam list refresh failed")
 
     async def on_ready(self):
         print(f"Mari is here: {self.user}")

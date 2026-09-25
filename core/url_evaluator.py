@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from core.heuristic_scanner import HeuristicScanner
 from core.content_scanner import ContentScanner
+from core.scam_list import ScamDomainList
 from core.url_utils import URLUtils, SHORTENER_DOMAINS
 from ai.predict import predict_url
 
@@ -20,6 +21,8 @@ class URLEvaluator:
         self.cache = {}
         self.whitelist = self._load_list("whitelist.json")
         self.blacklist = self._load_list("blacklist.json")
+        # Known Discord scam domains; refreshed in the background by MariBot.
+        self.scam_list = ScamDomainList(protected_extra=self.whitelist)
 
     def _load_list(self, filename: str):
         try:
@@ -99,6 +102,10 @@ class URLEvaluator:
         if self._is_listed(domain, self.blacklist):
             logger.info("URL blacklisted | url=%s | domain=%s", url, domain)
             return self._cache_detail(cache_key, now, "malware", 1.0, True, [], ["blacklist"])
+
+        if self.scam_list.contains(domain):
+            logger.info("URL on community scam list | url=%s | domain=%s", url, domain)
+            return self._cache_detail(cache_key, now, "phishing", 1.0, True, [], ["scamlist"])
 
         heur = HeuristicScanner.scan(url)
         if heur:

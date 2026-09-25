@@ -30,11 +30,20 @@ class URLUtils:
 
     @staticmethod
     def get_domain(url: str):
+        # .hostname (not .netloc) drops "user@" and ":port", so the classic trick
+        # https://discord.com@evil.com/ resolves to evil.com, the real destination.
         try:
-            host = urlparse(url).netloc.lower()
-            return host[4:] if host.startswith("www.") else host
+            host = (urlparse(url).hostname or "").lower()
+            return (host[4:] if host.startswith("www.") else host) or "unknown-domain"
         except Exception:
             return "unknown-domain"
+
+    @staticmethod
+    def domain_in(domain: str, domains) -> bool:
+        """True if `domain` is in `domains` or is a subdomain of one of them.
+        One set lookup per label, so it stays fast against large sets."""
+        parts = domain.lower().split(".")
+        return any(".".join(parts[i:]) in domains for i in range(len(parts)))
 
     @staticmethod
     async def resolve_short_url(url: str):

@@ -593,9 +593,14 @@ class MessageHandler:
 
         urls = URLUtils.extract_urls(message.content)
         for url in urls:
+            domain = URLUtils.get_domain(url)
+            # Per-server trusted domains (/whitelist add) are never scanned or actioned.
+            if guild and self.guild_settings and URLUtils.domain_in(
+                domain, self.guild_settings.get_whitelist(guild.id)
+            ):
+                continue
             detail = await self.evaluator.evaluate_detailed(url, threshold=guild_threshold)
             verdict = detail["verdict"]
-            domain = URLUtils.get_domain(url)
 
             self._stat(guild, "urls_scanned")
 
