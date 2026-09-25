@@ -1,4 +1,3 @@
-import os
 import csv
 import json
 import time
@@ -99,11 +98,8 @@ class MessageHandler:
         self.agent = agent
         self.warn_file = Path(__file__).resolve().parent.parent / "data" / "warnings.json"
         self.warns = self._load_warns()
-        self.timeout_durations = os.getenv(
-            "TIMEOUT_DURATIONS",
-            "10m,1h,6h,1d,3d"
-        ).split(",")
-        self.honeypot_warn_limit = int(os.getenv("HONEYPOT_WARN_LIMIT", "3"))
+        self.timeout_durations = config.TIMEOUT_DURATIONS
+        self.honeypot_warn_limit = config.HONEYPOT_WARN_LIMIT
         self._media_posts: dict[int, deque] = {}  # user id -> (time, channel id) of media/link posts
         self._banned_recently: dict[int, float] = {}  # user id -> ban time, one ban per burst
 
@@ -492,7 +488,7 @@ class MessageHandler:
                 return True, f"link:{verdict}", url
 
         agent = self.agent if getattr(self.agent, "enabled", False) else None
-        ocr_enabled = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
+        ocr_enabled = self.config.OCR_ENABLED
         for att in message.attachments:
             if not self._is_image_attachment(att):
                 continue
@@ -624,166 +620,152 @@ class MessageHandler:
                 logger.warning("Honeypot: cannot post warning in %s", message.channel)
 
     async def handle(self, message):
+        """Entry point for every message: honeypot mode, else links, then images."""
         if message.author.bot:
             return
 
         guild = message.guild
-
-        # Honeypot mode: if a honeypot channel is configured, the bot ONLY
-        # moderates that channel and ignores every other channel, so an
-        # over-eager verdict can never cause a wrongful ban elsewhere.
         honeypot_id = self._honeypot_channel_id(guild)
         if honeypot_id:
-            spread = self._note_media_post(message)
-            if message.channel.id == honeypot_id:
-                await self._handle_honeypot(message, spread)
-            elif (honeypot_id in spread and len(spread) >= SPAM_CHANNELS
-                  and not self._is_admin(message.author)):
-                # The honeypot post came first (and was only warned); the same
-                # burst is now landing in other channels too -> scam bot.
-                await self._honeypot_ban(
-                    message,
-                    reason=f"Honeypot: same post spread across {len(spread)} channels",
-                    catch=("spread", f"{len(spread)} channels in {SPAM_WINDOW_S}s"),
-                )
+            await self._route_honeypot_mode(message, honeypot_id)
             return
 
-        guild_threshold = (
-            self.guild_settings.get_threshold(guild.id)
-            if guild and self.guild_settings
-            else None
+        threshold = (
+            self.guild_settings.get_threshold(guild.id) if guild and self.guild_settings else None
         )
+        for url in URLUtils.extract_urls(message.content):
+            if await self._check_url(message, url, guild, threshold):
+                return  # message already removed; don't act on it twice
 
-        urls = URLUtils.extract_urls(message.content)
-        for url in urls:
-            domain = URLUtils.get_domain(url)
-            # Per-server trusted domains (/whitelist add) are never scanned or actioned.
-            if guild and self.guild_settings and URLUtils.domain_in(
-                domain, self.guild_settings.get_whitelist(guild.id)
-            ):
-                continue
-            detail = await self.evaluator.evaluate_detailed(url, threshold=guild_threshold)
-            verdict = detail["verdict"]
+        if self.config.OCR_ENABLED:
+            for attachment in message.attachments:
+                if self._is_image_attachment(attachment):
+                    await self._check_image(message, attachment)
 
-            self._stat(guild, "urls_scanned")
-
-            logger.info(
-                "URL checked | user=%s | url=%s | domain=%s | verdict=%s",
-                getattr(message.author, "id", "unknown"),
-                url,
-                domain,
-                verdict,
+    async def _route_honeypot_mode(self, message, honeypot_id: int):
+        """Honeypot mode: the bot ONLY moderates the honeypot channel, so an
+        over-eager verdict can never cause a wrongful ban elsewhere — except for
+        a spam burst that also hit the honeypot."""
+        spread = self._note_media_post(message)
+        if message.channel.id == honeypot_id:
+            await self._handle_honeypot(message, spread)
+        elif (honeypot_id in spread and len(spread) >= SPAM_CHANNELS
+              and not self._is_admin(message.author)):
+            # The honeypot post came first (and was only warned); the same
+            # burst is now landing in other channels too -> scam bot.
+            await self._honeypot_ban(
+                message,
+                reason=f"Honeypot: same post spread across {len(spread)} channels",
+                catch=("spread", f"{len(spread)} channels in {SPAM_WINDOW_S}s"),
             )
 
-            if verdict not in ("safe", "none"):
-                # Fire-and-forget in a thread: the page-content log does blocking
-                # HTTP fetches, so never let it stall the event loop or the action.
-                asyncio.create_task(asyncio.to_thread(_log_page_content, url, verdict))
+    async def _check_url(self, message, url: str, guild, threshold) -> bool:
+        """Evaluate one link and act on it. Returns True if the message was removed."""
+        domain = URLUtils.get_domain(url)
+        # Per-server trusted domains (/whitelist add) are never scanned or actioned.
+        if guild and self.guild_settings and URLUtils.domain_in(
+            domain, self.guild_settings.get_whitelist(guild.id)
+        ):
+            return False
+        detail = await self.evaluator.evaluate_detailed(url, threshold=threshold)
+        verdict = detail["verdict"]
+        self._stat(guild, "urls_scanned")
+        logger.info(
+            "URL checked | user=%s | url=%s | domain=%s | verdict=%s",
+            getattr(message.author, "id", "unknown"), url, domain, verdict,
+        )
+        if verdict in ("safe", "none"):
+            return False
 
-            # Borderline agent layer: when the AI is uncertain (probability in the
-            # configured band) with no hard signal, hand the case to the Gemini
-            # agent for review instead of auto-banning. Falls back to the original
-            # LightGBM action if the agent is unavailable or fails.
-            if self._is_borderline(detail, verdict):
-                if await self._handle_borderline(message, url, verdict, detail, guild):
-                    continue
+        # Fire-and-forget in a thread: the page-content log does blocking HTTP
+        # fetches, so never let it stall the event loop or the action.
+        asyncio.create_task(asyncio.to_thread(_log_page_content, url, verdict))
 
-            try:
-                if verdict in ("malware", "phishing", "scam"):
-                    await message.delete()
-                    self._stat(guild, "links_blocked")
-                    await message.author.ban(reason=verdict)
-                    self._stat(guild, "auto_bans")
-                    self._record(guild, message.author.id, reason=verdict, url=url)
-                    self._log_catch(guild, message.author, f"url:{verdict}", url, message.channel)
-                    self._reset_warns(message.author.id)
-                    await self._notify(
-                        guild, message.channel,
-                        f"I am sorry — I had to see {message.author.mention} out for {verdict}. "
-                        f"I take no joy in it; I only wish to keep everyone here safe.",
-                    )
+        # Borderline agent layer: an uncertain AI-only verdict goes to the Gemini
+        # agent for review instead of an automatic ban. Falls back to the normal
+        # action if the agent is unavailable or fails.
+        if self._is_borderline(detail, verdict) and await self._handle_borderline(
+            message, url, verdict, detail, guild
+        ):
+            return False
 
-                elif verdict == "gambling":
-                    await message.delete()
-                    self._stat(guild, "links_blocked")
-                    warn_count = self._add_warn(message.author.id)
-                    duration = self.timeout_durations[
-                        min(warn_count - 1, len(self.timeout_durations) - 1)
-                    ].strip()
-                    duration_td = self._parse_duration(duration)
-                    reason = f"{verdict} content | warn {warn_count}/5"
-                    until = datetime.now(timezone.utc) + duration_td
-                    await message.author.timeout(until, reason=reason)
-                    self._stat(guild, "warnings")
-                    self._record(guild, message.author.id, reason=reason, url=url)
-                    await self._notify(
-                        guild, message.channel,
-                        f"{message.author.mention}, I must ask you to step back for a little while "
-                        f"({duration}) — {reason}. Please be mindful; I would far rather guide you than scold you.",
-                    )
-                    if warn_count >= 5:
-                        await message.author.ban(reason=f"Reached {warn_count} warnings")
-                        self._reset_warns(message.author.id)
-                        self._stat(guild, "auto_bans")
-                        self._record(
-                            guild, message.author.id,
-                            reason=f"Banned after {warn_count} warnings", url=url,
-                        )
-                        await self._notify(
-                            guild, message.channel,
-                            f"I am truly sorry. After {warn_count} warnings I had no choice but to see "
-                            f"{message.author.mention} out. I gave every chance I could.",
-                        )
+        try:
+            if verdict in ("malware", "phishing", "scam"):
+                await self._ban_for_link(message, url, verdict, guild)
+                return True
+            if verdict == "gambling":
+                await self._timeout_for_gambling(message, url, verdict, guild)
+                return True
+        except discord.NotFound:
+            logger.warning("Message not found for deletion | url=%s", url)
+        except discord.Forbidden:
+            await self._notify(
+                guild, message.channel,
+                "Mari does not have sufficient permissions to take action.",
+            )
+        return False
 
-            except discord.NotFound:
-                logger.warning("Message not found for deletion | url=%s", url)
-            except discord.Forbidden:
-                await self._notify(
-                    guild, message.channel,
-                    "Mari does not have sufficient permissions to take action.",
+    async def _ban_for_link(self, message, url: str, verdict: str, guild):
+        await message.delete()
+        self._stat(guild, "links_blocked")
+        await message.author.ban(reason=verdict)
+        self._stat(guild, "auto_bans")
+        self._record(guild, message.author.id, reason=verdict, url=url)
+        self._log_catch(guild, message.author, f"url:{verdict}", url, message.channel)
+        self._reset_warns(message.author.id)
+        await self._notify(
+            guild, message.channel,
+            f"I am sorry — I had to see {message.author.mention} out for {verdict}. "
+            f"I take no joy in it; I only wish to keep everyone here safe.",
+        )
+
+    async def _timeout_for_gambling(self, message, url: str, verdict: str, guild):
+        """Delete + escalating timeout (TIMEOUT_DURATIONS); ban at the 5th warning."""
+        await message.delete()
+        self._stat(guild, "links_blocked")
+        warn_count = self._add_warn(message.author.id)
+        duration = self.timeout_durations[min(warn_count - 1, len(self.timeout_durations) - 1)].strip()
+        reason = f"{verdict} content | warn {warn_count}/5"
+        until = datetime.now(timezone.utc) + self._parse_duration(duration)
+        await message.author.timeout(until, reason=reason)
+        self._stat(guild, "warnings")
+        self._record(guild, message.author.id, reason=reason, url=url)
+        await self._notify(
+            guild, message.channel,
+            f"{message.author.mention}, I must ask you to step back for a little while "
+            f"({duration}) — {reason}. Please be mindful; I would far rather guide you than scold you.",
+        )
+        if warn_count >= 5:
+            await message.author.ban(reason=f"Reached {warn_count} warnings")
+            self._reset_warns(message.author.id)
+            self._stat(guild, "auto_bans")
+            self._record(guild, message.author.id, reason=f"Banned after {warn_count} warnings", url=url)
+            await self._notify(
+                guild, message.channel,
+                f"I am truly sorry. After {warn_count} warnings I had no choice but to see "
+                f"{message.author.mention} out. I gave every chance I could.",
+            )
+
+    async def _check_image(self, message, attachment):
+        """OCR an image; ban only on a clear match (2+ scam phrases) — one phrase
+        such as "login" on an ordinary screenshot is no reason to ban."""
+        try:
+            data = await attachment.read()
+            text = await asyncio.to_thread(ocr_image_bytes, data)
+            if not (text and text.strip()):
+                return
+            verdict = scan_ocr_text(text)
+            append_ocr_log(text, source=f"discord:{message.id}:{attachment.filename}", verdict=verdict)
+            logger.info(
+                "OCR extracted text | message=%s | attachment=%s | verdict=%s",
+                message.id, attachment.filename, verdict,
+            )
+            if verdict == "scam":
+                await self._handle_scam_image(
+                    message=message, verdict=verdict, filename=attachment.filename, ocr_text=text,
                 )
-
-        # ===== OCR for image attachments =====
-        ocr_enabled = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
-        if not ocr_enabled:
-            return
-
-        for attachment in message.attachments:
-            if not self._is_image_attachment(attachment):
-                continue
-
-            try:
-                data = await attachment.read()
-                text = await asyncio.to_thread(ocr_image_bytes, data)
-                if text and text.strip():
-                    verdict = scan_ocr_text(text)
-                    append_ocr_log(
-                        text,
-                        source=f"discord:{message.id}:{attachment.filename}",
-                        verdict=verdict,
-                    )
-                    logger.info(
-                        "OCR extracted text | message=%s | attachment=%s | verdict=%s",
-                        message.id,
-                        attachment.filename,
-                        verdict,
-                    )
-
-                    # ── Scam image: xoá + ban + log ──────────────────────
-                    # Only a clear match (2+ scam phrases); one phrase such as
-                    # "login" on an ordinary screenshot is no reason to ban.
-                    if verdict == "scam":
-                        await self._handle_scam_image(
-                            message=message,
-                            verdict=verdict,
-                            filename=attachment.filename,
-                            ocr_text=text,
-                        )
-
-            except Exception as exc:
-                logger.warning(
-                    "OCR failed | message=%s | attachment=%s | error=%s",
-                    message.id,
-                    attachment.filename,
-                    exc,
-                )
+        except Exception as exc:
+            logger.warning(
+                "OCR failed | message=%s | attachment=%s | error=%s",
+                message.id, attachment.filename, exc,
+            )

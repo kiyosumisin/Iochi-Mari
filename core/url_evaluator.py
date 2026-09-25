@@ -1,6 +1,5 @@
 import time
 import asyncio
-import os
 import json
 import logging
 from pathlib import Path
@@ -16,8 +15,9 @@ logger = logging.getLogger(__name__)
 class URLEvaluator:
     CACHE_TTL = 3600
 
-    def __init__(self, scanners):
+    def __init__(self, scanners, config):
         self.scanners = scanners
+        self.config = config
         self.cache = {}
         self.whitelist = self._load_list("whitelist.json")
         self.blacklist = self._load_list("blacklist.json")
@@ -121,7 +121,7 @@ class URLEvaluator:
                 {"feature": f.feature, "value": f.value, "shap": f.shap_value}
                 for f in prediction.top_features
             ]
-            override_threshold = float(os.getenv("AI_OVERRIDE_THRESHOLD", "0.9"))
+            override_threshold = self.config.AI_OVERRIDE_THRESHOLD
             # The model's tuned threshold is the only AI cut-off. (A former extra
             # "scam" tier at p >= 0.3 turned far more ordinary links into bans.)
             if is_malicious and ((not has_soft_category) or probability >= override_threshold):
@@ -136,8 +136,8 @@ class URLEvaluator:
         # content scan only run when the local classifiers are NOT already
         # confident — so clearly-safe and clearly-malicious URLs skip them.
         # (page_scan is dropped entirely: it duplicated ContentScanner's fetch.)
-        ovr = float(os.getenv("AI_OVERRIDE_THRESHOLD", "0.9"))
-        safe = float(os.getenv("AI_SAFE_THRESHOLD", "0.15"))
+        ovr = self.config.AI_OVERRIDE_THRESHOLD
+        safe = self.config.AI_SAFE_THRESHOLD
         confident_malicious = probability is not None and probability >= ovr
         confident_safe = probability is not None and probability <= safe and not heur
         uncertain = probability is None or not (confident_malicious or confident_safe)

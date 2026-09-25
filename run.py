@@ -2,7 +2,13 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
-from bot.mari_bot import MariBot
+from dotenv import load_dotenv
+
+# Load .env before importing the bot: some modules read settings at import time
+# (e.g. OCR_LANG in core/image_scanner.py), before Config() would load it.
+load_dotenv()
+
+from bot.mari_bot import MariBot  # noqa: E402
 
 
 def setup_logging():

@@ -23,7 +23,7 @@ class MariBot(commands.Bot):
 
         self.config = Config()
         self.scanners = ExternalScanners(self.config)
-        self.evaluator = URLEvaluator(self.scanners)
+        self.evaluator = URLEvaluator(self.scanners, self.config)
         self.guild_settings = GuildSettings()
         self.agent = MariAgent(self.config)
         self.handler = MessageHandler(

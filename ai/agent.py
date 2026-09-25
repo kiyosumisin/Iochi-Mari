@@ -22,7 +22,6 @@ Conventions: all output is English, no emoji (matches the rest of the bot).
 
 from __future__ import annotations
 
-import os
 import json
 import time
 import asyncio
@@ -127,22 +126,22 @@ class MariAgent:
         self.enabled = bool(self.api_key) and genai is not None and agent_on
         self._client = None
 
-        # Rate limiting (flash-lite free tier: 15 RPM / 500 RPD) + timeout.
+        # Rate limiting + timeout (see Config for the defaults).
         self._lock = asyncio.Lock()
         self._minute: deque[float] = deque()
         self._day: deque[float] = deque()
-        self._rpm = int(os.getenv("GEMINI_RPM", "15"))
-        self._rpd = int(os.getenv("GEMINI_RPD", "500"))
-        self._timeout = float(os.getenv("GEMINI_TIMEOUT", "8"))
+        self._rpm = config.GEMINI_RPM
+        self._rpd = config.GEMINI_RPD
+        self._timeout = config.GEMINI_TIMEOUT
 
         if self.enabled:
             try:
                 # Optional relay (relay/ folder, deployed on Vercel) for hosts where
                 # Google geo-blocks the Gemini API, e.g. a Hong Kong VPS.
-                relay = os.getenv("GEMINI_BASE_URL")
+                relay = config.GEMINI_BASE_URL
                 http_options = types.HttpOptions(
                     base_url=relay,
-                    headers={"x-relay-token": os.getenv("GEMINI_RELAY_TOKEN", "")},
+                    headers={"x-relay-token": config.GEMINI_RELAY_TOKEN},
                 ) if relay else None
                 self._client = genai.Client(api_key=self.api_key, http_options=http_options)
                 logger.info("MariAgent enabled (model=%s)", self.model_name)
