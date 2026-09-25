@@ -140,6 +140,24 @@ def scan_ocr_text(text: str) -> str | None:
     return None
 
 
+def dhash(data: bytes) -> int:
+    """64-bit difference hash: a fingerprint of the picture's shape that survives
+    resizing, recompression and format changes, so a re-posted scam image still
+    matches. Compare two with hash_distance()."""
+    with Image.open(io.BytesIO(data)) as im:
+        px = list(im.convert("L").resize((9, 8), Image.LANCZOS).getdata())
+    bits = 0
+    for row in range(8):
+        for col in range(8):
+            bits = (bits << 1) | (px[row * 9 + col] > px[row * 9 + col + 1])
+    return bits
+
+
+def hash_distance(a: int, b: int) -> int:
+    """Number of differing bits (0 = identical picture, 64 = unrelated)."""
+    return bin(a ^ b).count("1")
+
+
 def shrink_image(data: bytes) -> bytes:
     """Re-encode as a JPEG of at most 1600px: small enough for the Gemini relay
     (Vercel caps request bodies at 4.5 MB), still plenty for Gemini to read text."""

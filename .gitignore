@@ -10,3 +10,6 @@ data/guild_settings.json
 data/warnings.json
 .venv/
 ai/data/tranco.zip
+data/feedback_cases.json
+data/image_hashes.json
+ai/feedback.csv

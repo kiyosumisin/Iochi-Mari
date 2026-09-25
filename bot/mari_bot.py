@@ -6,8 +6,10 @@ from core.config import Config
 from core.external_scanners import ExternalScanners
 from core.url_evaluator import URLEvaluator
 from core.guild_settings import GuildSettings
+from core.feedback import FeedbackStore
 from ai.agent import MariAgent
 from bot.events import MessageHandler
+from bot.feedback import FeedbackButton
 from bot.commands import ALL_COGS
 
 logger = logging.getLogger(__name__)
@@ -26,14 +28,17 @@ class MariBot(commands.Bot):
         self.evaluator = URLEvaluator(self.scanners, self.config)
         self.guild_settings = GuildSettings()
         self.agent = MariAgent(self.config)
+        self.feedback = FeedbackStore()  # also read by the review buttons (bot/feedback.py)
         self.handler = MessageHandler(
-            self.evaluator, self.config, self.guild_settings, self.agent
+            self.evaluator, self.config, self.guild_settings, self.agent, self.feedback
         )
         self.synced = False
 
     async def setup_hook(self):
         for cog_cls in ALL_COGS:
             await self.add_cog(cog_cls(self))
+        # Review buttons stay clickable across restarts.
+        self.add_dynamic_items(FeedbackButton)
 
         if self.config.GUILD_ID:
             guild = discord.Object(id=self.config.GUILD_ID)

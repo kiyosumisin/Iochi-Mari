@@ -147,5 +147,7 @@ class GuildSettings:
             "auto_bans":      stats.get("auto_bans", 0),
             "warnings":       stats.get("warnings", 0),
             "threshold":      guild.get("threshold"),  # None = model's tuned threshold
+            "mod_confirmed":  stats.get("mod_confirmed", 0),   # review buttons: Mari was right
+            "mod_overturned": stats.get("mod_overturned", 0),  # review buttons: Mari was wrong
             "whitelist_count": len(guild.get("whitelist", [])),
         }

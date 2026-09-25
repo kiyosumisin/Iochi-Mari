@@ -24,6 +24,13 @@ Sisterhood), so all of the bot's messages speak in her calm, caring voice.
   instead of auto-banning; `/why` lets mods ask about a user afterwards.
 - **Per-guild configuration via slash commands** — channels, whitelist and sensitivity
   are all set in Discord; no need to edit files per server.
+- **Moderator feedback** — every ban notice carries *Correct* / *Wrong - unban* buttons,
+  and every borderline case *Ban* / *Dismiss*. One click fixes the mistake, and the
+  answer is kept for retraining (links) or remembered as an image fingerprint.
+- **Known scam images** — once an image is confirmed as a scam (by a moderator, or
+  by Gemini with high confidence in the honeypot), re-posts of it are banned in
+  **every** channel, even resized or recompressed. Images a moderator marked as
+  safe are never punished again.
 - **Evidence log** — every successful catch is recorded to `log/scam_catches.csv` and
   viewable with `/scamlog`.
 - **Permission-aware** — admin commands are hidden from normal members.
@@ -174,6 +181,9 @@ multiple servers.
 - `data/blacklist.json` — always-blocked domains
 - `data/guild_settings.json` — per-guild config, violations, stats
 - `data/warnings.json` — warning counters
+- `data/feedback_cases.json` — open/answered review cases behind the notice buttons
+- `data/image_hashes.json` — fingerprints of confirmed scam / confirmed safe images
+- `ai/feedback.csv` — links labelled by moderators, for retraining
 
 ---
 
@@ -215,6 +225,14 @@ The trained model ships at `ai/model.pkl`. To retrain from `ai/data/urls.csv`:
 ```bash
 python -m ai.train            # URL features only (fast)
 python -m ai.train --with-page   # also fetch live page features (slower)
+```
+
+To learn from your moderators' answers, copy the bot's feedback file and retrain
+with it (a moderator's label overrides the dataset's label for the same URL):
+
+```bash
+scp mari:~/Iochi-Mari/ai/feedback.csv ai/
+python -m ai.train --augment --feedback
 ```
 
 The bot itself only uses the probability/verdict, so SHAP explainability is **off by

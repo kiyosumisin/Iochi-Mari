@@ -383,7 +383,8 @@ def main() -> None:
             # feedback.csv may have a 'timestamp' column — drop it
             fb = fb[["url", "label"]].copy()
             before = len(df)
-            df = pd.concat([df, fb], ignore_index=True).drop_duplicates(subset="url")
+            # keep="last": a moderator's verdict overrides the dataset's label.
+            df = pd.concat([df, fb], ignore_index=True).drop_duplicates(subset="url", keep="last")
             logger.info(
                 "Merged feedback: %d rows → %d rows (+%d unique)",
                 before, len(df), len(df) - before,

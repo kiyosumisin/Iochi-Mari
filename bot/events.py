@@ -9,8 +9,9 @@ import discord
 import logging
 from core.url_utils import URLUtils
 from core.guild_settings import atomic_write
-from core.image_scanner import ocr_image_bytes, append_ocr_log, scan_ocr_text, shrink_image
+from core.image_scanner import ocr_image_bytes, append_ocr_log, scan_ocr_text, shrink_image, dhash
 from ai.agent import domain_age_days
+from bot.feedback import feedback_view
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,14 @@ SPAM_WINDOW_S = 120
 SPAM_CHANNELS = 3
 # Gemini must be at least this sure an honeypot image is a scam to ban on it.
 SCAM_IMAGE_CONFIDENCE = 0.8
+
+
+def _fingerprint(data: bytes):
+    """Image fingerprint (see core.image_scanner.dhash), or None if unreadable."""
+    try:
+        return dhash(data)
+    except Exception:
+        return None
 
 
 def _log_page_content(url: str, verdict: str) -> None:
@@ -91,11 +100,12 @@ def _log_page_content(url: str, verdict: str) -> None:
 
 
 class MessageHandler:
-    def __init__(self, evaluator, config, guild_settings=None, agent=None):
+    def __init__(self, evaluator, config, guild_settings=None, agent=None, feedback=None):
         self.evaluator = evaluator
         self.config = config
         self.guild_settings = guild_settings
         self.agent = agent
+        self.feedback = feedback  # core.feedback.FeedbackStore: review buttons + image fingerprints
         self.warn_file = Path(__file__).resolve().parent.parent / "data" / "warnings.json"
         self.warns = self._load_warns()
         self.timeout_durations = config.TIMEOUT_DURATIONS
@@ -120,6 +130,18 @@ class MessageHandler:
     def _is_admin(author) -> bool:
         perms = getattr(author, "guild_permissions", None)
         return perms is not None and perms.administrator
+
+    def _case_view(self, message, *, review: bool = False, verdict: str = "",
+                   url: str | None = None, image_hash: int | None = None):
+        """Open a feedback case for this decision and return the buttons for its
+        notice (Correct / Wrong-unban, or Ban / Dismiss for a review)."""
+        if not (self.feedback and message.guild):
+            return None
+        case_id = self.feedback.new_case(
+            "review" if review else "actioned", message.guild.id, message.author.id,
+            verdict=verdict, url=url, image_hash=image_hash,
+        )
+        return feedback_view(case_id, review=review)
 
     def _load_warns(self):
         try:
@@ -328,6 +350,7 @@ class MessageHandler:
             f"(p={prob:.2f}) | suspicion: `{susp}`\n"
             f"{explanation}\n"
             f"Action: flagged for manual review (no automatic action taken).",
+            view=self._case_view(message, review=True, verdict=verdict, url=url),
         )
         logger.info(
             "Borderline flagged | user=%s | url=%s | p=%.3f | suspicion=%s",
@@ -352,17 +375,17 @@ class MessageHandler:
             return guild.get_channel(int(cid))
         return None
 
-    async def _notify(self, guild, fallback_channel, text):
+    async def _notify(self, guild, fallback_channel, text, view=None):
         """
-        Send a moderation notice to the configured log channel.
-        Falls back to the channel where the action happened only if no log
-        channel is available, so notices are never silently lost.
+        Send a moderation notice (optionally with review buttons) to the
+        configured log channel. Falls back to the channel where the action
+        happened only if no log channel is available, so notices are never lost.
         """
         target = self._get_log_channel(guild) if guild else None
         if target is None:
             target = fallback_channel
         try:
-            return await target.send(text)
+            return await target.send(text, view=view) if view else await target.send(text)
         except Exception as exc:
             logger.warning("Could not send moderation notice: %s", exc)
             return None
@@ -373,6 +396,7 @@ class MessageHandler:
         verdict: str,
         filename: str,
         ocr_text: str,
+        image_hash: int | None = None,
     ) -> None:
         """
         Khi OCR phát hiện scam image:
@@ -428,7 +452,8 @@ class MessageHandler:
                 f"Image: `{filename}`\n"
                 f"{action}\nPlease watch over yourselves, everyone."
             )
-            await self._notify(guild, channel, alert)
+            await self._notify(guild, channel, alert,
+                               view=self._case_view(message, verdict=verdict, image_hash=image_hash))
         except Exception as exc:
             logger.warning("Could not send scam alert: %s", exc)
 
@@ -475,7 +500,8 @@ class MessageHandler:
         return int(getattr(self.config, "HONEYPOT_CHANNEL_ID", 0) or 0)
 
     async def _honeypot_detect_scam(self, message):
-        """Return (True, category, detail) if the message carries a scam link/image."""
+        """Return (is_scam, category, detail, evidence) for a honeypot post, where
+        evidence is {"url": ...} or {"image_hash": ...} for the review buttons."""
         guild = message.guild
         guild_threshold = (
             self.guild_settings.get_threshold(guild.id)
@@ -485,7 +511,7 @@ class MessageHandler:
         for url in URLUtils.extract_urls(message.content or ""):
             verdict = await self.evaluator.evaluate(url, threshold=guild_threshold)
             if verdict not in ("safe", "none"):
-                return True, f"link:{verdict}", url
+                return True, f"link:{verdict}", url, {"url": url}
 
         agent = self.agent if getattr(self.agent, "enabled", False) else None
         ocr_enabled = self.config.OCR_ENABLED
@@ -494,6 +520,7 @@ class MessageHandler:
                 continue
             try:
                 raw = await att.read()
+                image_hash = await asyncio.to_thread(_fingerprint, raw)
                 # Gemini looks at the picture itself — far better than OCR on
                 # screenshots of fake Nitro/Steam pages. Honeypot posts are rare,
                 # so this costs almost no quota.
@@ -502,7 +529,12 @@ class MessageHandler:
                     if res is not None:
                         logger.info("Honeypot Gemini image check | %s | %s", att.filename, res)
                         if res["scam"] and float(res.get("confidence") or 0) >= SCAM_IMAGE_CONFIDENCE:
-                            return True, "image:gemini", f"{att.filename}: {res.get('reason', '')}"
+                            # Remember it, so the rest of the spam wave is caught on
+                            # sight in every channel (a moderator can still undo it).
+                            if self.feedback and image_hash is not None:
+                                self.feedback.add_scam_hash(image_hash)
+                            return (True, "image:gemini", f"{att.filename}: {res.get('reason', '')}",
+                                    {"image_hash": image_hash})
                         continue  # judged not (clearly) a scam -> the warning path
                 if not ocr_enabled:
                     continue
@@ -516,15 +548,19 @@ class MessageHandler:
                         verdict=verdict,
                     )
                     if verdict == "scam":  # a single phrase ("suspected") only warns
-                        return True, "image:scam", att.filename
+                        return True, "image:scam", att.filename, {"image_hash": image_hash}
             except Exception as exc:
                 logger.warning(
                     "Honeypot image check failed | attachment=%s | error=%s",
                     att.filename, exc,
                 )
-        return False, "", ""
+        return False, "", "", {}
 
-    async def _honeypot_ban(self, message, reason: str, already_deleted: bool = False, catch=None):
+    async def _honeypot_ban(self, message, reason: str, already_deleted: bool = False, catch=None,
+                            evidence: dict | None = None, headline: str | None = None):
+        """Delete, ban and purge the author's last day of messages, then post a
+        notice with review buttons. `evidence` ({"url"} / {"image_hash"}) is what
+        a moderator's answer teaches Mari; `headline` replaces the honeypot wording."""
         guild = message.guild
         author = message.author
         # A spam burst can reach here from several messages at once: act once
@@ -559,10 +595,14 @@ class MessageHandler:
                 logger.error("Honeypot ban failed for %s: %s", author, exc)
 
         action = "Message removed. User banned." if banned else "Message removed."
+        headline = headline or (
+            f"**Someone slipped into the trap.** I found **{author}** where no honest member should wander."
+        )
         await self._notify(
             guild, message.channel,
-            f"**Someone slipped into the trap.** I found **{author}** where no honest member should wander.\n"
+            f"{headline}\n"
             f"Reason: `{reason}`\n{action}\nPlease rest easy, everyone — I am keeping watch over this place.",
+            view=self._case_view(message, verdict=reason, **(evidence or {})) if banned else None,
         )
 
     async def _handle_honeypot(self, message, spread=frozenset()):
@@ -580,7 +620,7 @@ class MessageHandler:
             logger.info("Honeypot post from admin %s — ignored.", author)
             return
 
-        is_scam, category, detail = await self._honeypot_detect_scam(message)
+        is_scam, category, detail, evidence = await self._honeypot_detect_scam(message)
         if not is_scam and len(spread) >= SPAM_CHANNELS:
             is_scam, category, detail = True, "spread", f"{len(spread)} channels in {SPAM_WINDOW_S}s"
         if is_scam:
@@ -588,6 +628,7 @@ class MessageHandler:
                 message,
                 reason=f"Honeypot {category}",
                 catch=(category, detail),
+                evidence=evidence,
             )
             return
 
@@ -624,6 +665,11 @@ class MessageHandler:
         if message.author.bot:
             return
 
+        # A re-post of an image already confirmed as a scam is caught in any
+        # channel — even in honeypot mode, since it is a copy, not a guess.
+        if await self._check_known_scam_images(message):
+            return
+
         guild = message.guild
         honeypot_id = self._honeypot_channel_id(guild)
         if honeypot_id:
@@ -641,6 +687,33 @@ class MessageHandler:
             for attachment in message.attachments:
                 if self._is_image_attachment(attachment):
                     await self._check_image(message, attachment)
+
+    async def _check_known_scam_images(self, message) -> bool:
+        """Ban on sight for an image whose fingerprint matches a confirmed scam
+        image (Gemini-certain honeypot catch or a moderator's "Correct"). Images
+        a moderator marked as safe never match. Returns True if acted on."""
+        if not (self.feedback and self.feedback.scam_hashes and message.guild):
+            return False
+        if self._is_admin(message.author):
+            return False
+        for att in message.attachments:
+            if not self._is_image_attachment(att):
+                continue
+            try:
+                image_hash = await asyncio.to_thread(_fingerprint, await att.read())
+            except Exception:
+                continue
+            if image_hash is not None and self.feedback.is_known_scam(image_hash):
+                await self._honeypot_ban(
+                    message,
+                    reason="Known scam image",
+                    catch=("image:known", att.filename),
+                    evidence={"image_hash": image_hash},
+                    headline=(f"**I recognised a known scam image** from **{message.author}** "
+                              f"in #{getattr(message.channel, 'name', '?')}."),
+                )
+                return True
+        return False
 
     async def _route_honeypot_mode(self, message, honeypot_id: int):
         """Honeypot mode: the bot ONLY moderates the honeypot channel, so an
@@ -716,7 +789,8 @@ class MessageHandler:
         await self._notify(
             guild, message.channel,
             f"I am sorry — I had to see {message.author.mention} out for {verdict}. "
-            f"I take no joy in it; I only wish to keep everyone here safe.",
+            f"I take no joy in it; I only wish to keep everyone here safe.\nLink: `{url}`",
+            view=self._case_view(message, verdict=verdict, url=url),
         )
 
     async def _timeout_for_gambling(self, message, url: str, verdict: str, guild):
@@ -763,6 +837,7 @@ class MessageHandler:
             if verdict == "scam":
                 await self._handle_scam_image(
                     message=message, verdict=verdict, filename=attachment.filename, ocr_text=text,
+                    image_hash=await asyncio.to_thread(_fingerprint, data),
                 )
         except Exception as exc:
             logger.warning(

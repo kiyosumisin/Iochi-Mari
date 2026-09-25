@@ -32,6 +32,13 @@ class ReportCommands(AdminCog):
             inline=True,
         )
         embed.add_field(name="Trusted Domains", value=str(s.get("whitelist_count", 0)), inline=True)
+        ok, wrong = s.get("mod_confirmed", 0), s.get("mod_overturned", 0)
+        embed.add_field(
+            name="Moderator Reviews",
+            value=(f"{ok} confirmed / {wrong} overturned ({ok / (ok + wrong):.0%} right)"
+                   if ok + wrong else "None yet"),
+            inline=False,
+        )
         embed.set_footer(text="I will keep watching over everyone here, with all my heart.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
