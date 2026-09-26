@@ -88,7 +88,7 @@ class TranslateCog(MariCog):
         except discord.HTTPException:
             return
         text = message.content.strip()
-        image = None if text else await first_image(message)
+        image = await first_image(message)
         if not text and image is None:
             return
 
@@ -97,8 +97,11 @@ class TranslateCog(MariCog):
             self._done.discard(key)  # let a later reaction retry
             return
 
-        parts = split_text(str(result["translation"]))[:5]  # cap spam from huge texts
-        source = " (text read from the image)" if image is not None else ""
+        said = str(result.get("translation") or "").strip()
+        shown = str(result.get("image_translation") or "").strip()
+        full = f"{said}\n\n**In the image:**\n{shown}" if said and shown else said or shown
+        parts = split_text(full)[:5]  # cap spam from huge texts
+        source = " (text read from the image)" if shown and not said else ""
         footer = (
             f"Translated into {result.get('language', code)}{source} "
             f"for {payload.member.display_name}"
