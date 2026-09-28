@@ -92,7 +92,8 @@ class TranslateCog(MariCog):
         if not text and image is None:
             return
 
-        result = await agent.translate(text[:4000], code, image=image)
+        async with channel.typing():  # Gemini can take a while; show Mari is on it
+            result = await agent.translate(text[:4000], code, image=image)
         if not result:
             self._done.discard(key)  # let a later reaction retry
             return

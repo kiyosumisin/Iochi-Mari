@@ -53,7 +53,7 @@ class Config:
         self.AGENT_ENABLED = _flag("AGENT_ENABLED", "true")
         self.GEMINI_RPM = int(os.getenv("GEMINI_RPM", "15") or "15")    # flash-lite free tier
         self.GEMINI_RPD = int(os.getenv("GEMINI_RPD", "500") or "500")
-        self.GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "15") or "15")
+        self.GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "30") or "30")
         # Optional relay (relay/, on Vercel) for hosts Google geo-blocks.
         self.GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL") or None
         self.GEMINI_RELAY_TOKEN = os.getenv("GEMINI_RELAY_TOKEN", "")

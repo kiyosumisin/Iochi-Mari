@@ -244,8 +244,13 @@ class MariAgent:
         if text:
             prompt += f"Message:\n<<<\n{text}\n>>>\n"
         if image is not None:
-            prompt = [types.Part.from_bytes(data=image, mime_type="image/jpeg"),
-                      prompt + "Also translate the main text of the attached image."]
+            prompt += "Also translate the main text of the attached image.\n"
+        # Without this, an image with an English interface around it (a Discord
+        # screenshot) often comes back translated into English instead.
+        prompt += (f'Write "translation" and "image_translation" in the main language of '
+                   f"{country_code}, even when the source text or the surrounding interface is in English.")
+        if image is not None:
+            prompt = [types.Part.from_bytes(data=image, mime_type="image/jpeg"), prompt]
         # Translation may not eat the last 30% of the Gemini budget: scam analysis keeps it.
         out = await self._generate(TRANSLATE_SYSTEM, prompt, json_out=True, reserve=0.3)
         try:
