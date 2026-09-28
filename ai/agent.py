@@ -127,6 +127,10 @@ class MariAgent:
     def __init__(self, config):
         self.config = config
         self.model_name = getattr(config, "GEMINI_MODEL", "gemini-3.5-flash-lite")
+        fallback = getattr(config, "GEMINI_FALLBACK_MODEL", "")
+        # Main model, then the fallback (if any), then the main model once more.
+        self._models = ([self.model_name, fallback, self.model_name]
+                        if fallback and fallback != self.model_name else [self.model_name] * 3)
         self.api_key = getattr(config, "GEMINI_API_KEY", None)
         agent_on = getattr(config, "AGENT_ENABLED", True)
 
@@ -151,7 +155,7 @@ class MariAgent:
                     headers={"x-relay-token": config.GEMINI_RELAY_TOKEN},
                 ) if relay else None
                 self._client = genai.Client(api_key=self.api_key, http_options=http_options)
-                logger.info("MariAgent enabled (model=%s)", self.model_name)
+                logger.info("MariAgent enabled (model=%s, fallback=%s)", self.model_name, self._models[1])
             except Exception as exc:
                 logger.warning("MariAgent init failed, disabling: %s", exc)
                 self.enabled = False
@@ -190,11 +194,12 @@ class MariAgent:
             response_mime_type="application/json" if json_out else None,
         )
         delay = 1.0
-        for attempt in range(3):
+        for attempt, model in enumerate(self._models):
+            nxt = self._models[attempt + 1] if attempt + 1 < len(self._models) else None
             try:
                 resp = await asyncio.wait_for(
                     self._client.aio.models.generate_content(
-                        model=self.model_name,
+                        model=model,
                         contents=prompt,
                         config=config,
                     ),
@@ -203,16 +208,20 @@ class MariAgent:
                 text = (resp.text or "").strip()
                 if text:
                     return text
-                logger.warning("Gemini returned empty text (attempt %d).", attempt + 1)
+                logger.warning("Gemini %s returned empty text (attempt %d).", model, attempt + 1)
             except asyncio.TimeoutError:
-                logger.warning("Gemini timeout (attempt %d).", attempt + 1)
+                logger.warning("Gemini %s timeout (attempt %d).", model, attempt + 1)
             except Exception as exc:
-                logger.warning("Gemini error (attempt %d): %s", attempt + 1, exc)
+                logger.warning("Gemini %s error (attempt %d): %s", model, attempt + 1, str(exc)[:200])
                 code = getattr(exc, "code", None)
                 if isinstance(code, int) and 400 <= code < 500:
-                    return None  # quota/bad request: retrying only burns more quota
-            await asyncio.sleep(delay)
-            delay *= 2
+                    # Out of quota: the other model has its own. Anything else
+                    # (bad request): retrying only burns more quota.
+                    if code != 429 or nxt in (None, model):
+                        return None
+            if nxt == model:  # same model again: give it a moment
+                await asyncio.sleep(delay)
+                delay *= 2
         return None
 
     # -- public: explain a borderline case -----------------------------------
@@ -260,6 +269,9 @@ class MariAgent:
             return None
         if not isinstance(data, dict):
             return None
+        for key in ("translation", "image_translation"):  # some models answer a list of lines
+            if isinstance(data.get(key), list):
+                data[key] = "\n".join(map(str, data[key]))
         return data if data.get("translation") or data.get("image_translation") else None
 
     # -- public: is this honeypot image a scam lure? -------------------------
