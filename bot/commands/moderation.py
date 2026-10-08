@@ -5,6 +5,8 @@ from discord import app_commands
 
 from .common import AdminCog, say
 
+SCAN_LIMIT = 1000  # how far back /purge looks for messages matching its filters
+
 
 class ModerationCommands(AdminCog):
     # -- Purge ---------------------------------------------------------------
@@ -13,7 +15,7 @@ class ModerationCommands(AdminCog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.cooldown(1, 5.0)
     @app_commands.describe(
-        count="How many recent messages to look through (1-1000)",
+        count="How many messages to delete (1-1000); with a filter, the latest matching ones",
         user="Only delete this member's messages",
         contains="Only delete messages containing this text (not case-sensitive)",
         bots="Only delete messages sent by bots",
@@ -31,14 +33,23 @@ class ModerationCommands(AdminCog):
             return
 
         needle = (contains or "").lower()
+        filtered = bool(user or bots or needle)
+        found = 0
 
         def check(m):
-            return ((user is None or m.author.id == user.id) and (not bots or m.author.bot)
-                    and needle in m.content.lower())
+            # Delete the latest `count` matching messages, looking back up to
+            # SCAN_LIMIT messages when a filter skips some of them.
+            nonlocal found
+            if found >= count or not ((user is None or m.author.id == user.id)
+                                      and (not bots or m.author.bot) and needle in m.content.lower()):
+                return False
+            found += 1
+            return True
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            deleted = await interaction.channel.purge(limit=count, check=check, bulk=True)
+            deleted = await interaction.channel.purge(limit=SCAN_LIMIT if filtered else count,
+                                                      check=check, bulk=True)
         except discord.Forbidden:
             await say(interaction, "Forgive me — I have not been given the permissions I would need to tidy messages here.")
             return
