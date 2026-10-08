@@ -38,6 +38,14 @@ class URLEvaluator:
             logger.warning("Failed to load %s: %s", filename, exc)
         return []
 
+    def is_known_scam(self, domain: str) -> bool:
+        """On the owner's blacklist or the community scam lists, and not trusted.
+        No model or external scanner: cheap and near-certain, so safe to run on
+        every link in every channel."""
+        return not self._is_listed(domain, self.whitelist) and (
+            self._is_listed(domain, self.blacklist) or self.scam_list.contains(domain)
+        )
+
     def _is_listed(self, domain: str, items: list[str]):
         domain = domain.lower()
         for d in items:

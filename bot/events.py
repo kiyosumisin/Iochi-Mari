@@ -160,12 +160,14 @@ class MessageHandler:
         except Exception as exc:
             logger.warning("Failed to save warnings.json: %s", exc)
 
-    def _add_warn(self, user_id: int):
-        key = str(user_id)
+    def _bump_warn(self, key: str) -> int:
         count = int(self.warns.get(key, 0)) + 1
         self.warns[key] = count
         self._save_warns()
         return count
+
+    def _add_warn(self, user_id: int):
+        return self._bump_warn(str(user_id))
 
     def _parse_duration(self, value: str) -> timedelta:
         value = value.strip().lower()
@@ -187,11 +189,7 @@ class MessageHandler:
 
     def _add_honeypot_warn(self, user_id: int) -> int:
         """Separate warn counter for accidental posts in the honeypot channel."""
-        key = f"hp:{user_id}"
-        count = int(self.warns.get(key, 0)) + 1
-        self.warns[key] = count
-        self._save_warns()
-        return count
+        return self._bump_warn(f"hp:{user_id}")
 
     def _reset_honeypot_warn(self, user_id: int):
         key = f"hp:{user_id}"
@@ -656,19 +654,22 @@ class MessageHandler:
                 logger.warning("Honeypot: cannot post warning in %s", message.channel)
 
     async def handle(self, message):
-        """Entry point for every message: honeypot mode, else links, then images."""
+        """Entry point for every message: known scams anywhere, then honeypot
+        mode, else links, then images."""
         if message.author.bot:
-            return
-
-        # A re-post of an image already confirmed as a scam is caught in any
-        # channel — even in honeypot mode, since it is a copy, not a guess.
-        if await self._check_known_scam_images(message):
             return
 
         guild = message.guild
         honeypot_id = self._honeypot_channel_id(guild)
+        spread = self._note_media_post(message)
+
+        # Copies of confirmed scams are caught in any channel, even in honeypot
+        # mode: a list or fingerprint match is a fact, not a guess.
+        if await self._check_known_scams(message, honeypot_id, spread):
+            return
+
         if honeypot_id:
-            await self._route_honeypot_mode(message, honeypot_id)
+            await self._route_honeypot_mode(message, honeypot_id, spread)
             return
 
         threshold = (
@@ -683,38 +684,86 @@ class MessageHandler:
                 if self._is_image_attachment(attachment):
                     await self._check_image(message, attachment)
 
-    async def _check_known_scam_images(self, message) -> bool:
-        """Ban on sight for an image whose fingerprint matches a confirmed scam
-        image (Gemini-certain honeypot catch or a moderator's "Correct"). Images
-        a moderator marked as safe never match. Returns True if acted on."""
-        if not (self.feedback and self.feedback.scam_hashes and message.guild):
-            return False
-        if self._is_admin(message.author):
-            return False
-        for att in message.attachments:
-            if not self._is_image_attachment(att):
-                continue
-            try:
-                image_hash = await asyncio.to_thread(_fingerprint, await att.read())
-            except Exception:
-                continue
-            if image_hash is not None and self.feedback.is_known_scam(image_hash):
-                await self._honeypot_ban(
-                    message,
-                    reason="Known scam image",
-                    catch=("image:known", att.filename),
-                    evidence={"image_hash": image_hash},
-                    headline=(f"**I recognised a known scam image** from **{message.author}** "
-                              f"in #{getattr(message.channel, 'name', '?')}."),
-                )
-                return True
-        return False
+    async def _find_known_scam(self, message, honeypot_mode: bool):
+        """(evidence, kind) for the first confirmed scam in the message, else
+        (None, ""): an image whose fingerprint matches a confirmed scam image,
+        or, in honeypot mode (where links are otherwise left alone), a link on
+        the scam lists. In normal mode _check_url already handles listed links."""
+        if honeypot_mode:
+            trusted = self.guild_settings.get_whitelist(message.guild.id) if self.guild_settings else set()
+            for url in URLUtils.extract_urls(message.content or ""):
+                domain = URLUtils.get_domain(url)
+                if not URLUtils.domain_in(domain, trusted) and self.evaluator.is_known_scam(domain):
+                    return {"url": url}, "link"
+        if self.feedback and self.feedback.scam_hashes:
+            for att in message.attachments:
+                if not self._is_image_attachment(att):
+                    continue
+                try:
+                    image_hash = await asyncio.to_thread(_fingerprint, await att.read())
+                except Exception:
+                    continue
+                if image_hash is not None and self.feedback.is_known_scam(image_hash):
+                    return {"image_hash": image_hash}, "image"
+        return None, ""
 
-    async def _route_honeypot_mode(self, message, honeypot_id: int):
+    async def _check_known_scams(self, message, honeypot_id: int, spread: set) -> bool:
+        """A confirmed scam in the honeypot, or in a burst across SPAM_CHANNELS
+        channels, is a scam bot: ban. Anywhere else it may be a member warning
+        others about it: delete, warn, and let moderators decide (ban after the
+        warning limit). Returns True if the message was acted on."""
+        if not message.guild or self._is_admin(message.author):
+            return False
+        evidence, kind = await self._find_known_scam(message, bool(honeypot_id))
+        if not evidence:
+            return False
+
+        guild, author, channel = message.guild, message.author, message.channel
+        where = f"#{getattr(channel, 'name', '?')}"
+        detail = evidence.get("url") or ", ".join(a.filename for a in message.attachments)
+        headline = f"**I recognised a known scam {kind}** from **{author}** in {where}."
+        if channel.id == honeypot_id or len(spread) >= SPAM_CHANNELS:
+            await self._honeypot_ban(message, reason=f"Known scam {kind}", catch=(f"{kind}:known", detail),
+                                     evidence=evidence, headline=headline)
+            return True
+
+        try:
+            await message.delete()
+        except (discord.NotFound, discord.Forbidden):
+            logger.warning("Could not delete known scam %s from %s", kind, author)
+        limit = self.honeypot_warn_limit
+        count = self._bump_warn(f"ks:{author.id}")
+        if count > limit:
+            await self._honeypot_ban(message, reason=f"Kept posting known scams after {limit} warnings",
+                                     already_deleted=True, catch=(f"{kind}:known", detail),
+                                     evidence=evidence, headline=headline)
+            return True
+
+        self._stat(guild, "links_blocked")
+        try:
+            await channel.send(
+                f"{author.mention}, I have removed your message: it carried a {kind} known to be a scam. "
+                f"If you were warning everyone, thank you, truly; please describe it in words rather "
+                f"than posting it again. This is notice {count}/{limit}.",
+                delete_after=20,
+            )
+        except discord.Forbidden:
+            logger.warning("Cannot post known-scam notice in %s", channel)
+        # No evidence on this case: "Dismiss" means "this member meant well",
+        # not "this scam is safe", so it must not teach Mari anything.
+        link = f"\nLink: `{evidence['url']}`" if "url" in evidence else ""
+        await self._notify(
+            guild, channel,
+            f"{headline}\nI removed it and gently warned them ({count}/{limit}), since they may only "
+            f"have been warning others.{link}\nIf they meant harm, you may ban them below.",
+            view=self._case_view(message, review=True, verdict=f"known scam {kind}"),
+        )
+        return True
+
+    async def _route_honeypot_mode(self, message, honeypot_id: int, spread: set):
         """Honeypot mode: the bot ONLY moderates the honeypot channel, so an
         over-eager verdict can never cause a wrongful ban elsewhere — except for
-        a spam burst that also hit the honeypot."""
-        spread = self._note_media_post(message)
+        a spam burst that also hit the honeypot (and known scams, handled earlier)."""
         if message.channel.id == honeypot_id:
             await self._handle_honeypot(message, spread)
         elif (honeypot_id in spread and len(spread) >= SPAM_CHANNELS
