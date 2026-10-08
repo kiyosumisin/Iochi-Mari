@@ -9,7 +9,7 @@ import discord
 import logging
 from core.url_utils import URLUtils
 from core.guild_settings import atomic_write
-from core.image_scanner import ocr_image_bytes, append_ocr_log, scan_ocr_text, shrink_image, dhash
+from core.image_scanner import ocr_image_bytes, scan_ocr_text, shrink_image, dhash
 from ai.agent import domain_age_days
 from bot.feedback import feedback_view
 
@@ -542,11 +542,6 @@ class MessageHandler:
                 text = await asyncio.to_thread(ocr_image_bytes, raw)
                 if text and text.strip():
                     verdict = scan_ocr_text(text)
-                    append_ocr_log(
-                        text,
-                        source=f"honeypot:{message.id}:{att.filename}",
-                        verdict=verdict,
-                    )
                     if verdict == "scam":  # a single phrase ("suspected") only warns
                         return True, "image:scam", att.filename, {"image_hash": image_hash}
             except Exception as exc:
@@ -829,7 +824,6 @@ class MessageHandler:
             if not (text and text.strip()):
                 return
             verdict = scan_ocr_text(text)
-            append_ocr_log(text, source=f"discord:{message.id}:{attachment.filename}", verdict=verdict)
             logger.info(
                 "OCR extracted text | message=%s | attachment=%s | verdict=%s",
                 message.id, attachment.filename, verdict,

@@ -2,7 +2,6 @@ import io
 import os
 import re
 import logging
-from pathlib import Path
 
 try:
     from PIL import Image, ImageOps
@@ -111,18 +110,6 @@ def ocr_image_bytes(data: bytes) -> str:
         logger.warning("OCR lang %r unavailable — falling back to eng", OCR_LANG)
         text = _run_ocr(img, "eng")
     return text or ""
-
-
-def append_ocr_log(text: str, source: str, verdict: str | None = None):
-    log_dir = Path(__file__).resolve().parent.parent / "log"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "ocr.log"
-    with log_file.open("a", encoding="utf-8") as f:
-        if verdict:
-            f.write(f"SOURCE: {source} | VERDICT: {verdict}\n")
-        else:
-            f.write(f"SOURCE: {source}\n")
-        f.write(f"{text.strip()}\n---\n")
 
 
 _SCAM_PATTERNS = [re.compile(rf"\b{re.escape(k)}\b") for k in SCAM_KEYWORDS]

@@ -73,6 +73,16 @@ class FeedbackStore:
         self._save_cases()
         return case
 
+    def purge(self, before: float) -> int:
+        """Forget cases created before `before` (epoch seconds; see core.retention).
+        Their buttons then answer "no longer on record"."""
+        old = [c for c, case in self.cases.items() if case.get("created", 0) < before]
+        for c in old:
+            del self.cases[c]
+        if old:
+            self._save_cases()
+        return len(old)
+
     # -- image fingerprints ------------------------------------------------
     def is_known_scam(self, h: int) -> bool:
         return (any(hash_distance(h, s) <= MATCH_DISTANCE for s in self.scam_hashes)

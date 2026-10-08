@@ -7,6 +7,7 @@ from core.external_scanners import ExternalScanners
 from core.url_evaluator import URLEvaluator
 from core.guild_settings import GuildSettings
 from core.feedback import FeedbackStore
+from core.retention import purge_all
 from ai.agent import MariAgent
 from bot.events import MessageHandler
 from bot.feedback import FeedbackButton
@@ -52,6 +53,7 @@ class MariBot(commands.Bot):
 
         self.synced = True
         self.refresh_scam_list.start()
+        self.purge_old_data.start()
 
         # Pre-load the URL model so the first scan doesn't block on a cold start.
         try:
@@ -68,6 +70,14 @@ class MariBot(commands.Bot):
             await self.evaluator.scam_list.refresh()
         except Exception:
             logger.exception("Scam list refresh failed")
+
+    @tasks.loop(hours=24)
+    async def purge_old_data(self):
+        """Delete stored message content / activity past its retention (first run at startup)."""
+        try:
+            purge_all(self.guild_settings, self.feedback)
+        except Exception:
+            logger.exception("Retention purge failed")
 
     async def on_ready(self):
         print(f"Mari is here: {self.user}")

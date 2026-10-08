@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from bot.mari_bot import MariBot  # noqa: E402
+from core.retention import RETENTION_DAYS  # noqa: E402
 
 
 def setup_logging():
@@ -18,9 +19,9 @@ def setup_logging():
 
     handler = TimedRotatingFileHandler(
         log_file,
-        when="W0",
-        interval=1,
-        backupCount=4,
+        # One file per day, kept as long as the other records (core/retention.py).
+        when="midnight",
+        backupCount=RETENTION_DAYS - 1,
         encoding="utf-8",
     )
     logging.basicConfig(

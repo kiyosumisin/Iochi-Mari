@@ -114,6 +114,29 @@ class GuildSettings:
             .get(str(user_id), [])
         )
 
+    def purge_violations(self, before: datetime) -> int:
+        """Forget violation records older than `before` (see core.retention)."""
+        def recent(v):
+            try:
+                ts = datetime.strptime(v["timestamp"], "%Y-%m-%d %H:%M UTC").replace(tzinfo=timezone.utc)
+            except (KeyError, TypeError, ValueError):
+                return False
+            return ts >= before
+
+        dropped = 0
+        for guild in self.data.values():
+            violations = guild.get("violations", {})
+            for uid in list(violations):
+                kept = [v for v in violations[uid] if recent(v)]
+                dropped += len(violations[uid]) - len(kept)
+                if kept:
+                    violations[uid] = kept
+                else:
+                    del violations[uid]
+        if dropped:
+            self._save()
+        return dropped
+
     def clear_violations(self, guild_id: int, user_id: int):
         violations = self._guild(guild_id).get("violations", {})
         if str(user_id) in violations:

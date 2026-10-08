@@ -1,6 +1,6 @@
 # Mari — Privacy Policy
 
-*Last updated: 8 October 2026*
+*Last updated: 8 October 2026 (automatic deletion after 30 days)*
 
 Mari is a Discord bot that protects servers from scams: it checks links and
 images posted in messages and removes scams. This page explains what data Mari
@@ -46,9 +46,15 @@ Data is never sold, and is not shared with anyone else.
 
 ## Retention
 
-Stored records are kept until the server's administrators or the bot owner
-delete them. Server backups are kept for 7 days. If Mari is removed from a
-server, that server's data can be deleted on request.
+Records that contain message content or user activity (the evidence log,
+message excerpts of review cases, violation history, review cases and the
+bot's own logs) are deleted automatically after 23 days. Server backups are
+kept for 7 days, so no such record is kept for more than 30 days in total.
+
+Two things are kept longer because they identify no one: fingerprints of
+confirmed scam images, and links labelled by moderators (without any user ID)
+used to retrain the link classifier. A server's settings are kept while Mari
+is in that server, and can be deleted on request.
 
 ## Your choices
 
