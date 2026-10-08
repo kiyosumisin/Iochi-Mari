@@ -9,18 +9,16 @@ import discord
 
 logger = logging.getLogger(__name__)
 
-# action -> (label, style, does it mark the case as a scam?)
+# action -> (label, style, does it mark the case as a scam?, note added to the notice)
 _ACTIONS = {
-    "ok":      ("Correct", discord.ButtonStyle.secondary, True),
-    "wrong":   ("Wrong - unban", discord.ButtonStyle.danger, False),
-    "ban":     ("Ban", discord.ButtonStyle.danger, True),
-    "dismiss": ("Dismiss", discord.ButtonStyle.secondary, False),
-}
-_NOTES = {
-    "ok":      "Confirmed as correct by {who}. Thank you.",
-    "wrong":   "Marked as my mistake by {who}; the member has been unbanned. Thank you for correcting me.",
-    "ban":     "Confirmed as a scam by {who}; the member has been banned.",
-    "dismiss": "Dismissed as harmless by {who}.",
+    "ok":      ("Correct", discord.ButtonStyle.secondary, True,
+                "Confirmed as correct by {who}. Thank you."),
+    "wrong":   ("Wrong - unban", discord.ButtonStyle.danger, False,
+                "Marked as my mistake by {who}; the member has been unbanned. Thank you for correcting me."),
+    "ban":     ("Ban", discord.ButtonStyle.danger, True,
+                "Confirmed as a scam by {who}; the member has been banned."),
+    "dismiss": ("Dismiss", discord.ButtonStyle.secondary, False,
+                "Dismissed as harmless by {who}."),
 }
 
 
@@ -29,7 +27,7 @@ class FeedbackButton(
     template=r"mari:fb:(?P<action>ok|wrong|ban|dismiss):(?P<case>[0-9a-f]{8})",
 ):
     def __init__(self, action: str, case_id: str):
-        label, style, _ = _ACTIONS[action]
+        label, style, _, _ = _ACTIONS[action]
         super().__init__(discord.ui.Button(label=label, style=style, custom_id=f"mari:fb:{action}:{case_id}"))
         self.action, self.case_id = action, case_id
 
@@ -67,13 +65,13 @@ class FeedbackButton(
         except discord.Forbidden:
             return await say("Forgive me — I have not been given the permissions I would need for this.")
 
-        malicious = _ACTIONS[self.action][2]
+        _, _, malicious, note = _ACTIONS[self.action]
         bot.feedback.resolve(self.case_id, malicious, str(user))
         if case["kind"] == "actioned":
             bot.guild_settings.increment_stat(guild.id, "mod_confirmed" if malicious else "mod_overturned")
         logger.info("Feedback | case=%s | %s by %s", self.case_id, self.action, user)
 
-        note = _NOTES[self.action].format(who=user.display_name)
+        note = note.format(who=user.display_name)
         await interaction.response.edit_message(
             content=f"{interaction.message.content}\n*{note}*"[:2000], view=None,
         )

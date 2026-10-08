@@ -142,7 +142,7 @@ def dhash(data: bytes) -> int:
 
 def hash_distance(a: int, b: int) -> int:
     """Number of differing bits (0 = identical picture, 64 = unrelated)."""
-    return bin(a ^ b).count("1")
+    return (a ^ b).bit_count()
 
 
 def shrink_image(data: bytes) -> bytes:

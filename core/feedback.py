@@ -24,7 +24,6 @@ HASHES_FILE = ROOT / "data" / "image_hashes.json"
 FEEDBACK_CSV = ROOT / "ai" / "feedback.csv"
 
 MALICIOUS_LABEL = 0   # same convention as ai/data/urls.csv (0 = malicious, 1 = benign)
-MAX_CASES = 2000      # oldest cases are forgotten beyond this
 MATCH_DISTANCE = 6    # images whose fingerprints differ in <= 6 of 64 bits are "the same"
 
 
@@ -52,17 +51,14 @@ class FeedbackStore:
             "url": url, "image_hash": f"{image_hash:016x}" if image_hash is not None else None,
             "created": time.time(), "resolved": None,
         }
-        if len(self.cases) > MAX_CASES:
-            for old in sorted(self.cases, key=lambda c: self.cases[c]["created"])[: len(self.cases) - MAX_CASES]:
-                del self.cases[old]
         self._save_cases()
         return case_id
 
-    def resolve(self, case_id: str, malicious: bool, by: str) -> dict | None:
-        """Record a moderator's answer (once). Returns the case, or None if unknown."""
+    def resolve(self, case_id: str, malicious: bool, by: str):
+        """Record a moderator's answer (once; unknown cases are ignored)."""
         case = self.cases.get(case_id)
         if case is None or case["resolved"]:
-            return case
+            return
         case["resolved"] = {"malicious": malicious, "by": by,
                             "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
         if case.get("url"):
@@ -71,7 +67,6 @@ class FeedbackStore:
             h = int(case["image_hash"], 16)
             self.add_scam_hash(h) if malicious else self.add_safe_hash(h)
         self._save_cases()
-        return case
 
     def purge(self, before: float) -> int:
         """Forget cases created before `before` (epoch seconds; see core.retention).
@@ -91,7 +86,7 @@ class FeedbackStore:
     def add_scam_hash(self, h: int):
         # A blank or plain-gradient picture hashes to (almost) all 0s or all 1s and
         # would "match" every other blank screenshot: too little detail to ban on.
-        if not 8 <= bin(h).count("1") <= 56:
+        if not 8 <= h.bit_count() <= 56:
             return
         if not any(hash_distance(h, s) <= MATCH_DISTANCE for s in self.scam_hashes):
             self.scam_hashes.append(h)

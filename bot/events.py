@@ -385,7 +385,7 @@ class MessageHandler:
         if target is None:
             target = fallback_channel
         try:
-            return await target.send(text, view=view) if view else await target.send(text)
+            return await target.send(text, view=view)
         except Exception as exc:
             logger.warning("Could not send moderation notice: %s", exc)
             return None
