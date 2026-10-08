@@ -1,6 +1,9 @@
 import discord
 import asyncio
 import logging
+import math
+
+import aiohttp
 from discord.ext import commands, tasks
 from core.config import Config
 from core.external_scanners import ExternalScanners
@@ -54,6 +57,8 @@ class MariBot(commands.Bot):
         self.synced = True
         self.refresh_scam_list.start()
         self.purge_old_data.start()
+        if self.config.HEALTHCHECK_URL:
+            self.heartbeat.start()
 
         # Pre-load the URL model so the first scan doesn't block on a cold start.
         try:
@@ -78,6 +83,24 @@ class MariBot(commands.Bot):
             purge_all(self.guild_settings, self.feedback)
         except Exception:
             logger.exception("Retention purge failed")
+
+    @tasks.loop(minutes=5)
+    async def heartbeat(self):
+        """Ping healthchecks.io while connected to Discord; if the bot, the VPS or
+        the Discord connection dies, the pings stop and the owner gets an email."""
+        if not math.isfinite(self.latency):  # no gateway heartbeat yet / disconnected
+            return
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(self.config.HEALTHCHECK_URL,
+                                       timeout=aiohttp.ClientTimeout(total=10)):
+                    pass
+        except Exception as exc:
+            logger.warning("Heartbeat ping failed: %s", exc)
+
+    @heartbeat.before_loop
+    async def _heartbeat_wait(self):
+        await self.wait_until_ready()
 
     async def on_ready(self):
         print(f"Mari is here: {self.user}")

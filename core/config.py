@@ -59,6 +59,9 @@ class Config:
         # Optional relay (relay/, on Vercel) for hosts Google geo-blocks.
         self.GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL") or None
         self.GEMINI_RELAY_TOKEN = os.getenv("GEMINI_RELAY_TOKEN", "")
+        # healthchecks.io ping URL: Mari pings it every 5 minutes while connected,
+        # and healthchecks.io emails the owner when the pings stop ("" = off).
+        self.HEALTHCHECK_URL = os.getenv("HEALTHCHECK_URL", "")
 
         if not self.TOKEN:
             raise RuntimeError("DISCORD_TOKEN is missing")

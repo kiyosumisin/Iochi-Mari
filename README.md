@@ -281,6 +281,24 @@ free student cloud credit, or a spare machine) with a process manager
 host and set environment variables there. `.env` is git-ignored and must be recreated
 on the server.
 
+### Backups & monitoring
+
+`deploy/backup.sh` (cron, daily) encrypts `data/`, `.env`, the catch log and
+`ai/feedback.csv` with the passphrase in `~/.mari-backup-pass`, keeps 7 days in
+`~/backups`, and force-pushes them to a private repo when `.env` has
+`BACKUP_REPO=git@github.com:<you>/<repo>.git` (deploy key with write access at
+`~/.ssh/mari_backup`). Keep a copy of the passphrase off the server. Restore with
+`gpg --decrypt mari-YYYY-MM-DD.tar.gz.gpg | tar xzf -`.
+
+```cron
+15 3 * * * /home/azureuser/Iochi-Mari/deploy/backup.sh >> /home/azureuser/backups/backup.log 2>&1 # mari-backup
+```
+
+With `HEALTHCHECK_URL` (and `BACKUP_HEALTHCHECK_URL`) set to
+[healthchecks.io](https://healthchecks.io) ping URLs, Mari pings every 5 minutes while
+connected to Discord and the backup pings after each success; you get an email when
+either stops.
+
 ---
 
 ## Troubleshooting
