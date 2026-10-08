@@ -8,7 +8,7 @@ from .common import AdminCog, say
 
 class ModerationCommands(AdminCog):
     # -- Purge ---------------------------------------------------------------
-    @app_commands.command(name="purge", description="Delete recent messages, optionally only from a member or containing text")
+    @app_commands.command(name="purge", description="Delete recent messages, optionally only from a member, from bots, or containing text")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.cooldown(1, 5.0)
@@ -16,6 +16,7 @@ class ModerationCommands(AdminCog):
         count="How many recent messages to look through (1-1000)",
         user="Only delete this member's messages",
         contains="Only delete messages containing this text (not case-sensitive)",
+        bots="Only delete messages sent by bots",
     )
     async def purge(
         self,
@@ -23,6 +24,7 @@ class ModerationCommands(AdminCog):
         count: app_commands.Range[int, 1, 1000],
         user: discord.Member = None,
         contains: str = None,
+        bots: bool = False,
     ):
         if not isinstance(interaction.channel, discord.TextChannel):
             await say(interaction, "I am sorry, I can only tidy messages within a text channel.")
@@ -31,7 +33,8 @@ class ModerationCommands(AdminCog):
         needle = (contains or "").lower()
 
         def check(m):
-            return (user is None or m.author.id == user.id) and needle in m.content.lower()
+            return ((user is None or m.author.id == user.id) and (not bots or m.author.bot)
+                    and needle in m.content.lower())
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
@@ -42,7 +45,8 @@ class ModerationCommands(AdminCog):
         except discord.HTTPException as e:
             await say(interaction, f"Something went amiss while I was tidying up. I am sorry. `({e})`")
             return
-        which = (f" from {user.display_name}" if user else "") + (f' containing "{contains}"' if contains else "")
+        which = ((f" from {user.display_name}" if user else "") + (" from bots" if bots else "")
+                 + (f' containing "{contains}"' if contains else ""))
         noun = "message" if len(deleted) == 1 else "messages"
         await say(interaction, f"There, I have tidied things up — I removed {len(deleted)} {noun}{which}.")
 

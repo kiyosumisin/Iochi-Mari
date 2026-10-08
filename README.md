@@ -202,7 +202,7 @@ multiple servers.
 
 | Command | Description |
 |---|---|
-| `/purge <count> [user] [contains]` | Delete recent messages (up to 1000), optionally only a member's and/or those containing some text |
+| `/purge <count> [user] [bots] [contains]` | Delete recent messages (up to 1000), optionally only a member's, only bots', and/or those containing some text |
 | `/ban <user> [reason]` / `/unban <user_id>` | Remove / restore a member |
 | `/history <user>` | Review a member's recorded violations |
 | `/threshold <0.0-1.0>` | Adjust detection sensitivity (per server) |

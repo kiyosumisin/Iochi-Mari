@@ -143,7 +143,7 @@ class BasicCommands(MariCog):
         embed.add_field(
             name="Moderation (Administrator)",
             value=(
-                "`/purge <count> [user] [contains]` — Delete recent messages, optionally only a member's or containing text\n"
+                "`/purge <count> [user] [bots] [contains]` — Delete recent messages, optionally only a member's, only bots', or only those containing some text\n"
                 "`/ban <user> [reason]` — Remove a member\n"
                 "`/unban <user_id>` — Lift a ban by user ID\n"
                 "`/history <user>` — Review a member's past violations\n"
