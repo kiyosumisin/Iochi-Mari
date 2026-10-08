@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 class MariBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
+        # The only privileged intent: Mari must read messages to find scam links.
+        # (Members isn't needed: message, reaction and interaction payloads carry the member.)
         intents.message_content = True
-        intents.members = True
 
         super().__init__(command_prefix="!", intents=intents)
 
