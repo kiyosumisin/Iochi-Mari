@@ -202,7 +202,7 @@ multiple servers.
 
 | Command | Description |
 |---|---|
-| `/purge <amount> [filter] [user] [text]` | Delete up to 1000 messages, optionally filtered (`any`, `user`, `match`, `not`, `startswith`, `endswith`, `links`, `invites`, `images`, `embeds`, `mentions`, `bots`, `humans`) |
+| `/purge <amount> [user] [contains]` | Delete recent messages (up to 1000), optionally only a member's and/or those containing some text |
 | `/ban <user> [reason]` / `/unban <user_id>` | Remove / restore a member |
 | `/history <user>` | Review a member's recorded violations |
 | `/threshold <0.0-1.0>` | Adjust detection sensitivity (per server) |
