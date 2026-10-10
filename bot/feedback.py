@@ -7,6 +7,8 @@ import logging
 
 import discord
 
+from bot.voice import is_sensei, to_reader
+
 logger = logging.getLogger(__name__)
 
 # action -> (label, style, does it mark the case as a scam?, note added to the notice)
@@ -36,8 +38,10 @@ class FeedbackButton(
         return cls(match["action"], match["case"])
 
     async def callback(self, interaction: discord.Interaction):
+        sensei = await is_sensei(interaction.client, interaction.user)
+
         async def say(text):
-            await interaction.response.send_message(text, ephemeral=True)
+            await interaction.response.send_message(to_reader(text, sensei), ephemeral=True)
 
         user = interaction.user
         if not getattr(getattr(user, "guild_permissions", None), "administrator", False):
@@ -71,7 +75,7 @@ class FeedbackButton(
             bot.guild_settings.increment_stat(guild.id, "mod_confirmed" if malicious else "mod_overturned")
         logger.info("Feedback | case=%s | %s by %s", self.case_id, self.action, user)
 
-        note = note.format(who=user.display_name)
+        note = to_reader(note.format(who=user.display_name), sensei)
         await interaction.response.edit_message(
             content=f"{interaction.message.content}\n*{note}*"[:2000], view=None,
         )

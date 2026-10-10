@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core.image_scanner import ocr_image_bytes
-from bot.events import VERDICT_VI
+from bot.voice import VERDICT_VI, is_sensei, to_reader
 from .common import MariCog, is_owner, OWNER_ONLY_DENIAL, say
 
 
@@ -16,7 +16,7 @@ def _is_valid_url(url: str) -> bool:
     return url.startswith(("http://", "https://")) and "." in url
 
 
-def _verdict_embed(url: str, verdict: str) -> discord.Embed:
+def _verdict_embed(url: str, verdict: str, sensei: bool = False) -> discord.Embed:
     if verdict in ("malware", "phishing", "scam"):
         color = discord.Color.red()
         label = f"Nguy hiểm ({VERDICT_VI.get(verdict, verdict)})"
@@ -33,16 +33,17 @@ def _verdict_embed(url: str, verdict: str) -> discord.Embed:
     embed = discord.Embed(title="Mari xem giúp liên kết", color=color)
     embed.add_field(name="Liên kết", value=f"`{url}`", inline=False)
     embed.add_field(name="Kết quả", value=label, inline=True)
-    embed.set_footer(text=footer)
+    embed.set_footer(text=to_reader(footer, sensei))
     return embed
 
 
 class BasicCommands(MariCog):
     @commands.command()
     async def ping(self, ctx: commands.Context):
-        await ctx.send(
-            "Vâng, Mari ở đây ạ. Bạn cứ gọi Mari bất cứ lúc nào nhé, giúp bạn chẳng bao giờ là phiền cả."
-        )
+        await ctx.send(to_reader(
+            "Vâng, Mari ở đây ạ. Bạn cứ gọi Mari bất cứ lúc nào nhé, giúp bạn chẳng bao giờ là phiền cả.",
+            await is_sensei(ctx.bot, ctx.author),
+        ))
 
     check_group = app_commands.Group(
         name="check",
@@ -71,7 +72,7 @@ class BasicCommands(MariCog):
 
         try:
             verdict = await self.bot.evaluator.evaluate(url, threshold=guild_threshold)
-            embed = _verdict_embed(url, verdict)
+            embed = _verdict_embed(url, verdict, await is_owner(interaction))
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
             await say(
@@ -124,6 +125,7 @@ class BasicCommands(MariCog):
 
     @app_commands.command(name="help", description="Xem tất cả những việc Mari có thể làm")
     async def help(self, interaction: discord.Interaction):
+        sensei = await is_owner(interaction)
         embed = discord.Embed(
             title="Mari có thể giúp gì cho bạn?",
             description=(
@@ -171,7 +173,7 @@ class BasicCommands(MariCog):
             ),
             inline=False,
         )
-        if await is_owner(interaction):
+        if sensei:
             embed.add_field(
                 name="Chỉ dành cho Sensei",
                 value=(
@@ -181,4 +183,9 @@ class BasicCommands(MariCog):
                 inline=False,
             )
         embed.set_footer(text="Nếu bạn còn cần gì nữa, xin đừng ngại nói với Mari nhé. Được giúp bạn là niềm vui của Mari.")
+        embed.title = to_reader(embed.title, sensei)
+        embed.description = to_reader(embed.description, sensei)
+        for i, f in enumerate(embed.fields):
+            embed.set_field_at(i, name=f.name, value=to_reader(f.value, sensei), inline=f.inline)
+        embed.set_footer(text=to_reader(embed.footer.text, sensei))
         await interaction.response.send_message(embed=embed, ephemeral=True)

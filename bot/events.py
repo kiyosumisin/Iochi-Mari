@@ -12,6 +12,7 @@ from core.guild_settings import atomic_write
 from core.image_scanner import ocr_image_bytes, scan_ocr_text, shrink_image, dhash
 from ai.agent import domain_age_days
 from bot.feedback import feedback_view
+from bot.voice import KIND_VI, SUSPICION_VI, VERDICT_VI
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,6 @@ SPAM_WINDOW_S = 120
 SPAM_CHANNELS = 3
 # Gemini must be at least this sure an honeypot image is a scam to ban on it.
 SCAM_IMAGE_CONFIDENCE = 0.8
-
-# How Mari names things in her (Vietnamese) messages.
-VERDICT_VI = {"phishing": "lừa đảo đánh cắp tài khoản", "malware": "mã độc",
-              "scam": "lừa đảo", "gambling": "cờ bạc"}
-KIND_VI = {"link": "liên kết", "image": "hình ảnh"}
-SUSPICION_VI = {"low": "thấp", "medium": "trung bình", "high": "cao"}
 
 
 def _fingerprint(data: bytes):

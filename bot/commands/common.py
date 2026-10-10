@@ -4,19 +4,14 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot.voice import is_sensei, to_reader
+
 # Message shown when a non-owner tries to use an owner-only command.
 OWNER_ONLY_DENIAL = "Mari xin lỗi, việc này chỉ có Sensei mới nhờ Mari làm được thôi ạ."
 
 
 async def is_owner(interaction: discord.Interaction) -> bool:
-    """True only for the configured OWNER_ID or the bot's application owner."""
-    owner_id = getattr(getattr(interaction.client, "config", None), "OWNER_ID", 0)
-    if owner_id and interaction.user.id == owner_id:
-        return True
-    try:
-        return await interaction.client.is_owner(interaction.user)
-    except Exception:
-        return False
+    return await is_sensei(interaction.client, interaction.user)
 
 
 class MariCog(commands.Cog):
@@ -67,6 +62,7 @@ class AdminCog(MariCog):
 
 async def say(interaction: discord.Interaction, msg: str):
     """Reply privately to the user who ran the command (works before or after defer)."""
+    msg = to_reader(msg, await is_owner(interaction))
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)
     else:
