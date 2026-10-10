@@ -11,6 +11,7 @@ from .reports import ReportCommands
 from .owner import OwnerCommands
 from .datamine import DatamineCommands
 from .translate import TranslateCog
+from .chat import ChatCog
 
 ALL_COGS = [
     BasicCommands,
@@ -20,4 +21,5 @@ ALL_COGS = [
     OwnerCommands,
     DatamineCommands,
     TranslateCog,
+    ChatCog,
 ]

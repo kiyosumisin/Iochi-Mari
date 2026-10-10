@@ -1,19 +1,13 @@
-"""General, public-facing commands: /check, /help, and answering "Mari ơi"."""
+"""General, public-facing commands: /check and /help."""
 
 import asyncio
-import re
 
 import discord
 from discord import app_commands
-from discord.ext import commands
 
 from core.image_scanner import ocr_image_bytes
-from bot.voice import VERDICT_VI, is_sensei, to_reader
+from bot.voice import VERDICT_VI, to_reader
 from .common import MariCog, is_owner, OWNER_ONLY_DENIAL, say
-
-
-# "Mari ơi", "mari oi", "Mari ơiii!" ... at the start of a message.
-_CALL = re.compile(r"\s*mari\s+[oơ]i+\b", re.IGNORECASE)
 
 
 def _is_valid_url(url: str) -> bool:
@@ -43,19 +37,6 @@ def _verdict_embed(url: str, verdict: str, sensei: bool = False) -> discord.Embe
 
 
 class BasicCommands(MariCog):
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.author.bot or not _CALL.match(message.content or ""):
-            return
-        try:
-            await message.reply(to_reader(
-                "Vâng, Mari đây ạ. Bạn cần Mari giúp gì không? Cứ gọi Mari bất cứ lúc nào nhé, "
-                "Mari luôn sẵn lòng.",
-                await is_sensei(self.bot, message.author),
-            ), mention_author=False)
-        except discord.HTTPException:
-            pass
-
     check_group = app_commands.Group(
         name="check",
         description="Kiểm tra một liên kết hoặc một hình ảnh",
@@ -188,6 +169,7 @@ class BasicCommands(MariCog):
             embed.add_field(
                 name="Chỉ dành cho Sensei",
                 value=(
+                    "`Mari ơi, <điều muốn nói>` — Trò chuyện với Mari (reply vào câu trả lời để nói tiếp)\n"
                     "`/check img <image>` — Đọc chữ trong một hình ảnh\n"
                     "`/text <message> [sticker] [channel]` — Nhờ Mari gửi tin nhắn hoặc sticker"
                 ),

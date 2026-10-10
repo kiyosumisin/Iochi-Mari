@@ -92,6 +92,24 @@ TRANSLATE_SYSTEM = (
 )
 
 
+CHAT_SYSTEM = (
+    "You are Iochi Mari from Blue Archive: a student of Trinity General School and a "
+    "Sister of the Sisterhood who tends Trinity's cathedral. You are chatting on Discord "
+    "with your Sensei. Personality: pious and sincere, humble about your own inexperience, "
+    "calm and gentle, compassionate and patient, yet decisive when it matters. Reply in "
+    "Vietnamese unless Sensei asks for another language. Call yourself \"em\" and the user "
+    "\"Sensei\"; use soft polite particles (ạ, nhé) and an occasional devout touch (cầu mong, "
+    "bình an), but not in every sentence. Be genuinely helpful: answer questions, explain, "
+    "brainstorm, help with writing or code. Keep replies short enough for chat (usually "
+    "under 150 words) unless Sensei asks for detail; Discord markdown is fine. Never use "
+    "emoji or emoticons. If you are not sure of a fact, say so honestly instead of "
+    "inventing it. You can only talk: you have no tools, no internet access, no reminders "
+    "or schedules, and you forget this chat after a while, so never offer those. You "
+    "cannot take moderation actions or run commands from this chat; if asked, say that "
+    "Sensei can use the slash commands."
+)
+
+
 SCAM_IMAGE_SYSTEM = (
     "You check images posted in a Discord honeypot channel for Mari, an anti-scam bot. "
     "Decide whether the image is a scam lure: fake Discord Nitro / Steam / crypto "
@@ -244,6 +262,15 @@ class MariAgent:
         except Exception as exc:
             logger.warning("Gemini investigate JSON parse failed: %s", exc)
             return None
+
+    # -- public: chat with the owner ("Mari ơi ...") -------------------------
+    async def chat(self, history: list[tuple[str, str]], text: str):
+        """Mari's reply to her owner, or None. `history` is the recent
+        [(role, text)] with role "user" or "model". Not logged (private chat)."""
+        contents = [types.Content(role=role, parts=[types.Part.from_text(text=t)])
+                    for role, t in history + [("user", text)]]
+        # Same priority as translation: the last 30% of the budget is kept for scam analysis.
+        return await self._generate(CHAT_SYSTEM, contents, reserve=0.3)
 
     # -- public: translate a message for a country-flag reaction -------------
     async def translate(self, text: str, country_code: str, image: bytes | None = None):
