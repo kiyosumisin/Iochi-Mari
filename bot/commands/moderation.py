@@ -1,9 +1,15 @@
 """Moderation commands: /purge, /ban, /unban, /history."""
 
+import logging
+import time
+from datetime import timedelta
+
 import discord
 from discord import app_commands
 
 from .common import AdminCog, say
+
+logger = logging.getLogger(__name__)
 
 SCAN_LIMIT = 1000  # how far back /purge looks for messages matching its filters
 
@@ -34,31 +40,39 @@ class ModerationCommands(AdminCog):
 
         needle = (contains or "").lower()
         filtered = bool(user or bots or needle)
-        found = 0
-
-        def check(m):
-            # Delete the latest `count` matching messages, looking back up to
-            # SCAN_LIMIT messages when a filter skips some of them.
-            nonlocal found
-            if found >= count or not ((user is None or m.author.id == user.id)
-                                      and (not bots or m.author.bot) and needle in m.content.lower()):
-                return False
-            found += 1
-            return True
+        channel, started = interaction.channel, time.monotonic()
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            deleted = await interaction.channel.purge(limit=SCAN_LIMIT if filtered else count,
-                                                      check=check, bulk=True)
+            # The latest `count` matching messages, looking back up to SCAN_LIMIT
+            # messages when a filter skips some; stop as soon as there are enough.
+            picked = []
+            async for m in channel.history(limit=SCAN_LIMIT if filtered else count):
+                if ((user is None or m.author.id == user.id) and (not bots or m.author.bot)
+                        and needle in m.content.lower()):
+                    picked.append(m)
+                    if len(picked) >= count:
+                        break
+            # Bulk delete takes 100 at a time but only messages under 14 days old;
+            # older ones must go one by one (slow, rate-limited).
+            cutoff = discord.utils.utcnow() - timedelta(days=14)
+            recent = [m for m in picked if m.created_at > cutoff]
+            for i in range(0, len(recent), 100):
+                await channel.delete_messages(recent[i:i + 100])
+            for m in picked[len(recent):]:
+                await m.delete()
         except discord.Forbidden:
             await say(interaction, "Xin thứ lỗi, Mari chưa được cấp quyền để dọn tin nhắn ở đây.")
             return
         except discord.HTTPException as e:
             await say(interaction, f"Đã có trục trặc trong lúc Mari dọn dẹp. Mari xin lỗi. `({e})`")
             return
+        logger.info("Purge | #%s | asked=%s user=%s bots=%s contains=%r | deleted=%s (%s old) | %.1fs",
+                    channel, count, getattr(user, "id", None), bots, contains, len(picked),
+                    len(picked) - len(recent), time.monotonic() - started)
         which = ((f" của {user.display_name}" if user else "") + (" của bot" if bots else "")
                  + (f' có chứa "{contains}"' if contains else ""))
-        await say(interaction, f"Xong rồi ạ, Mari đã dọn {len(deleted)} tin nhắn{which}.")
+        await say(interaction, f"Xong rồi ạ, Mari đã dọn {len(picked)} tin nhắn{which}.")
 
     # -- Ban / Unban ---------------------------------------------------------
     @app_commands.command(name="ban", description="Mời một thành viên rời khỏi server")
