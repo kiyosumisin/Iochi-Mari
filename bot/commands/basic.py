@@ -25,7 +25,7 @@ def _verdict_embed(url: str, verdict: str, sensei: bool = False) -> discord.Embe
     if verdict in ("malware", "phishing", "scam"):
         color = discord.Color.red()
         label = f"Nguy hiểm ({VERDICT_VI.get(verdict, verdict)})"
-        footer = "Xin bạn đừng mở liên kết này nhé. Cầu mong bạn luôn được bình an."
+        footer = "Xin đừng mở liên kết này nhé. Cầu mong bạn luôn được bình an."
     elif verdict == "gambling":
         color = discord.Color.orange()
         label = f"Cần lưu ý ({VERDICT_VI.get(verdict, verdict)})"
@@ -33,7 +33,7 @@ def _verdict_embed(url: str, verdict: str, sensei: bool = False) -> discord.Embe
     else:
         color = discord.Color.green()
         label = "An toàn"
-        footer = "Liên kết này có vẻ an toàn. Dù vậy bạn vẫn cẩn thận nhé, vì điều Mari mong nhất là bạn được bình an."
+        footer = "Liên kết này có vẻ an toàn. Dù vậy vẫn cẩn thận nhé, vì điều Mari mong nhất là bạn được bình an."
 
     embed = discord.Embed(title="Mari xem giúp liên kết", color=color)
     embed.add_field(name="Liên kết", value=f"`{url}`", inline=False)
@@ -49,8 +49,8 @@ class BasicCommands(MariCog):
             return
         try:
             await message.reply(to_reader(
-                "Vâng, Mari đây ạ. Bạn cần Mari giúp gì không? Bạn cứ gọi Mari bất cứ lúc nào nhé, "
-                "giúp bạn chẳng bao giờ là phiền cả.",
+                "Vâng, Mari đây ạ. Bạn cần Mari giúp gì không? Cứ gọi Mari bất cứ lúc nào nhé, "
+                "Mari luôn sẵn lòng.",
                 await is_sensei(self.bot, message.author),
             ), mention_author=False)
         except discord.HTTPException:
@@ -141,7 +141,7 @@ class BasicCommands(MariCog):
             title="Mari có thể giúp gì cho bạn?",
             description=(
                 "Mari là thành viên Sisterhood của Trinity. Mari sẽ cố hết sức để giữ bình yên "
-                "cho mọi người ở đây, và giúp bạn bất cứ khi nào bạn cần. Đây là những việc Mari có thể làm:"
+                "cho mọi người ở đây, và giúp bạn mỗi khi cần. Đây là những việc Mari có thể làm:"
             ),
             color=discord.Color.blurple(),
         )
@@ -193,7 +193,7 @@ class BasicCommands(MariCog):
                 ),
                 inline=False,
             )
-        embed.set_footer(text="Nếu bạn còn cần gì nữa, xin đừng ngại nói với Mari nhé. Được giúp bạn là niềm vui của Mari.")
+        embed.set_footer(text="Nếu còn cần gì nữa, xin đừng ngại nói với Mari nhé. Được giúp bạn là niềm vui của Mari.")
         embed.title = to_reader(embed.title, sensei)
         embed.description = to_reader(embed.description, sensei)
         for i, f in enumerate(embed.fields):
