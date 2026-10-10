@@ -196,7 +196,7 @@ multiple servers.
 |---|---|
 | `/check <url>` | Inspect a link (result is private to you) |
 | `/help` | List available commands |
-| `!ping` | Check the bot is alive |
+| `Mari ơi` (a message starting with it) | Mari answers, so you know she is there |
 
 ### Admin only (require **Administrator**; hidden from other members)
 

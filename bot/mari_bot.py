@@ -116,5 +116,3 @@ class MariBot(commands.Bot):
 
         # MessageHandler xử lý toàn bộ: URL scan + OCR + ban + log
         await self.handler.handle(message)
-
-        await self.process_commands(message)
