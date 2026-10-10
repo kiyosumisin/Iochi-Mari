@@ -100,18 +100,18 @@ class TranslateCog(MariCog):
 
         said = str(result.get("translation") or "").strip()
         shown = str(result.get("image_translation") or "").strip()
-        full = f"{said}\n\n**In the image:**\n{shown}" if said and shown else said or shown
+        full = f"{said}\n\n**Trong ảnh:**\n{shown}" if said and shown else said or shown
         parts = split_text(full)[:5]  # cap spam from huge texts
-        source = " (text read from the image)" if shown and not said else ""
+        source = " (chữ đọc từ ảnh)" if shown and not said else ""
         footer = (
-            f"Translated into {result.get('language', code)}{source} "
-            f"for {payload.member.display_name}"
+            f"Đã dịch sang {result.get('language', code)}{source} "
+            f"cho {payload.member.display_name}"
         )
         try:
             # Embed text never pings, so mentions inside the message stay harmless.
             for i, part in enumerate(parts, 1):
                 embed = discord.Embed(description=part, color=discord.Color.blurple())
-                embed.set_footer(text=footer + (f" — part {i}/{len(parts)}" if len(parts) > 1 else ""))
+                embed.set_footer(text=footer + (f" — phần {i}/{len(parts)}" if len(parts) > 1 else ""))
                 if i == 1:
                     embed.set_author(
                         name=message.author.display_name,

@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 
 # action -> (label, style, does it mark the case as a scam?, note added to the notice)
 _ACTIONS = {
-    "ok":      ("Correct", discord.ButtonStyle.secondary, True,
-                "Confirmed as correct by {who}. Thank you."),
-    "wrong":   ("Wrong - unban", discord.ButtonStyle.danger, False,
-                "Marked as my mistake by {who}; the member has been unbanned. Thank you for correcting me."),
+    "ok":      ("Đúng rồi", discord.ButtonStyle.secondary, True,
+                "{who} đã xác nhận Mari làm đúng. Cảm ơn bạn nhiều."),
+    "wrong":   ("Sai - gỡ ban", discord.ButtonStyle.danger, False,
+                "{who} cho biết Mari đã nhầm, và thành viên này đã được gỡ ban. Cảm ơn bạn đã sửa giúp Mari."),
     "ban":     ("Ban", discord.ButtonStyle.danger, True,
-                "Confirmed as a scam by {who}; the member has been banned."),
-    "dismiss": ("Dismiss", discord.ButtonStyle.secondary, False,
-                "Dismissed as harmless by {who}."),
+                "{who} đã xác nhận đây là scam, và thành viên này đã bị ban."),
+    "dismiss": ("Bỏ qua", discord.ButtonStyle.secondary, False,
+                "{who} đã xem và thấy không có gì đáng lo."),
 }
 
 
@@ -41,29 +41,29 @@ class FeedbackButton(
 
         user = interaction.user
         if not getattr(getattr(user, "guild_permissions", None), "administrator", False):
-            return await say("Forgive me — only an administrator may review my decisions.")
+            return await say("Xin thứ lỗi, chỉ quản trị viên mới duyệt lại quyết định của Mari được thôi.")
 
         bot = interaction.client
         case = bot.feedback.cases.get(self.case_id)
         if case is None:
-            return await say("I am sorry, I no longer have this case on record.")
+            return await say("Mari xin lỗi, Mari không còn lưu ca này nữa.")
         if case["resolved"]:
-            return await say(f"This case was already reviewed by {case['resolved']['by']}.")
+            return await say(f"Ca này đã được {case['resolved']['by']} duyệt rồi ạ.")
 
         guild = interaction.guild
         target = discord.Object(id=case["user_id"])
         try:
             if self.action == "wrong":
-                await guild.unban(target, reason=f"Decision overturned by {user}")
+                await guild.unban(target, reason=f"{user} đã sửa lại quyết định")
             elif self.action == "ban":
-                await guild.ban(target, reason=f"Confirmed scam by {user} (case {self.case_id})",
+                await guild.ban(target, reason=f"{user} xác nhận scam (ca {self.case_id})",
                                 delete_message_days=1)
                 bot.guild_settings.record_violation(
-                    guild.id, case["user_id"], url=case.get("url") or "", reason="Confirmed scam (review)")
+                    guild.id, case["user_id"], url=case.get("url") or "", reason="Mod xác nhận scam")
         except discord.NotFound:
             pass  # already unbanned, or the account is gone
         except discord.Forbidden:
-            return await say("Forgive me — I have not been given the permissions I would need for this.")
+            return await say("Xin thứ lỗi, Mari chưa được cấp quyền để làm việc này.")
 
         _, _, malicious, note = _ACTIONS[self.action]
         bot.feedback.resolve(self.case_id, malicious, str(user))

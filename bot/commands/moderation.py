@@ -10,15 +10,15 @@ SCAN_LIMIT = 1000  # how far back /purge looks for messages matching its filters
 
 class ModerationCommands(AdminCog):
     # -- Purge ---------------------------------------------------------------
-    @app_commands.command(name="purge", description="Delete recent messages, optionally only from a member, from bots, or containing text")
+    @app_commands.command(name="purge", description="Xóa các tin gần đây; có thể chỉ xóa tin của một người, của bot, hoặc có chứa một đoạn chữ")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.cooldown(1, 5.0)
     @app_commands.describe(
-        count="How many messages to delete (1-1000); with a filter, the latest matching ones",
-        user="Only delete this member's messages",
-        contains="Only delete messages containing this text (not case-sensitive)",
-        bots="Only delete messages sent by bots",
+        count="Số tin cần xóa (1-1000); nếu có lọc thì là những tin khớp gần nhất",
+        user="Chỉ xóa tin của thành viên này",
+        contains="Chỉ xóa tin có chứa đoạn chữ này (không phân biệt hoa thường)",
+        bots="Chỉ xóa tin do bot gửi",
     )
     async def purge(
         self,
@@ -29,7 +29,7 @@ class ModerationCommands(AdminCog):
         bots: bool = False,
     ):
         if not isinstance(interaction.channel, discord.TextChannel):
-            await say(interaction, "I am sorry, I can only tidy messages within a text channel.")
+            await say(interaction, "Mari xin lỗi, Mari chỉ dọn tin nhắn được trong kênh chữ thôi.")
             return
 
         needle = (contains or "").lower()
@@ -51,105 +51,104 @@ class ModerationCommands(AdminCog):
             deleted = await interaction.channel.purge(limit=SCAN_LIMIT if filtered else count,
                                                       check=check, bulk=True)
         except discord.Forbidden:
-            await say(interaction, "Forgive me — I have not been given the permissions I would need to tidy messages here.")
+            await say(interaction, "Xin thứ lỗi, Mari chưa được cấp quyền để dọn tin nhắn ở đây.")
             return
         except discord.HTTPException as e:
-            await say(interaction, f"Something went amiss while I was tidying up. I am sorry. `({e})`")
+            await say(interaction, f"Đã có trục trặc trong lúc Mari dọn dẹp. Mari xin lỗi. `({e})`")
             return
-        which = ((f" from {user.display_name}" if user else "") + (" from bots" if bots else "")
-                 + (f' containing "{contains}"' if contains else ""))
-        noun = "message" if len(deleted) == 1 else "messages"
-        await say(interaction, f"There, I have tidied things up — I removed {len(deleted)} {noun}{which}.")
+        which = ((f" của {user.display_name}" if user else "") + (" của bot" if bots else "")
+                 + (f' có chứa "{contains}"' if contains else ""))
+        await say(interaction, f"Xong rồi ạ, Mari đã dọn {len(deleted)} tin nhắn{which}.")
 
     # -- Ban / Unban ---------------------------------------------------------
-    @app_commands.command(name="ban", description="Remove a member from this server")
+    @app_commands.command(name="ban", description="Mời một thành viên rời khỏi server")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(user="The member to remove", reason="Reason for the removal")
+    @app_commands.describe(user="Thành viên cần mời ra", reason="Lý do")
     async def ban(
         self,
         interaction: discord.Interaction,
         user: discord.Member,
-        reason: str = "No reason provided",
+        reason: str = "Không ghi lý do",
     ):
         if user.top_role >= interaction.guild.me.top_role:
             await say(
                 interaction,
-                "I am afraid I cannot act against this member. "
-                "Their standing is above my own, and I must honour that.",
+                "Mari e là không thể làm vậy với thành viên này. "
+                "Vai trò của họ cao hơn Mari, và Mari phải tôn trọng điều đó.",
             )
             return
         try:
             await user.ban(reason=f"[Manual] {reason}")
             self.bot.guild_settings.record_violation(interaction.guild.id, user.id, reason=reason)
             await interaction.response.send_message(
-                f"I have seen **{user}** out of the server.\nReason: `{reason}`\n"
-                f"I take no joy in it, but I hope peace may be kept here."
+                f"Mari đã mời **{user}** rời khỏi server.\nLý do: `{reason}`\n"
+                f"Mari không vui gì khi làm vậy, chỉ mong nơi này được giữ bình yên."
             )
         except discord.Forbidden:
             await say(
                 interaction,
-                "Forgive me — I have not been given the permissions I would need for this.",
+                "Xin thứ lỗi, Mari chưa được cấp quyền để làm việc này.",
             )
         except Exception as e:
             await say(
                 interaction,
-                f"Something went amiss and I could not see it through. I am sorry. `({e})`",
+                f"Đã có trục trặc nên Mari chưa làm được. Mari xin lỗi. `({e})`",
             )
 
-    @app_commands.command(name="unban", description="Lift a ban by Discord user ID")
+    @app_commands.command(name="unban", description="Gỡ ban theo ID người dùng Discord")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(user_id="The Discord user ID to unban")
+    @app_commands.describe(user_id="ID Discord của người cần gỡ ban")
     async def unban(self, interaction: discord.Interaction, user_id: str):
         try:
             uid = int(user_id)
             user = await self.bot.fetch_user(uid)
             await interaction.guild.unban(user)
             await interaction.response.send_message(
-                f"I have lifted the ban on **{user}**. May they make good use of this second chance."
+                f"Mari đã gỡ ban cho **{user}**. Cầu mong họ trân trọng cơ hội thứ hai này."
             )
         except ValueError:
             await say(
                 interaction,
-                "I am sorry, but that does not look like a valid user ID. "
-                "Might you check it and try once more?",
+                "Mari xin lỗi, đây có vẻ không phải là một ID hợp lệ. "
+                "Bạn kiểm tra lại rồi thử thêm lần nữa giúp Mari nhé?",
             )
         except discord.NotFound:
             await say(
                 interaction,
-                "I could find no banned soul with that ID. "
-                "Perhaps the ban has already been lifted.",
+                "Mari không tìm thấy ai bị ban với ID này. "
+                "Có lẽ họ đã được gỡ ban từ trước rồi.",
             )
         except Exception as e:
             await say(
                 interaction,
-                f"I was unable to lift the ban. Please forgive the trouble. `({e})`",
+                f"Mari chưa gỡ ban được. Xin bạn thứ lỗi vì phiền phức này. `({e})`",
             )
 
     # -- Violation history ---------------------------------------------------
-    @app_commands.command(name="history", description="Review a member's past violations")
+    @app_commands.command(name="history", description="Xem các lần vi phạm trước đây của một thành viên")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(user="The member to look up")
+    @app_commands.describe(user="Thành viên cần xem")
     async def history(self, interaction: discord.Interaction, user: discord.Member):
         records = self.bot.guild_settings.get_violations(interaction.guild.id, user.id)
         if not records:
             await say(
                 interaction,
-                f"I have noted no wrongdoing for **{user}**. "
-                f"It seems they have conducted themselves well.",
+                f"Mari chưa ghi nhận vi phạm nào của **{user}**. "
+                f"Có vẻ họ vẫn luôn cư xử tốt."
             )
             return
         embed = discord.Embed(
-            title=f"Violation History — {user}",
-            description="Here is what I have gently noted of past incidents.",
+            title=f"Lịch sử vi phạm — {user}",
+            description="Đây là những gì Mari đã ghi lại về các lần trước.",
             color=discord.Color.orange(),
         )
         for i, record in enumerate(records[-10:], 1):
             embed.add_field(
-                name=f"Incident {i} — {record.get('timestamp', 'Unknown time')}",
-                value=f"URL: `{record.get('url', 'N/A')}`\nReason: {record.get('reason', 'N/A')}",
+                name=f"Lần {i} — {record.get('timestamp', 'không rõ thời gian')}",
+                value=f"Liên kết: `{record.get('url') or 'không có'}`\nLý do: {record.get('reason') or 'không có'}",
                 inline=False,
             )
         await interaction.response.send_message(embed=embed, ephemeral=True)

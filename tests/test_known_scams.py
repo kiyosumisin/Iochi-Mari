@@ -99,8 +99,8 @@ def test_lone_known_scam_link_outside_honeypot_is_warned_not_banned():
     w.post(GENERAL, f"careful, this is a scam: {SCAM}")
     assert w.kinds().count("ban") == 0 and "delete" in w.kinds(), w.log
     notices = [e for e in w.log if e[0] == "send" and e[2] is not None]
-    assert len(notices) == 1 and "Link: `" + SCAM in notices[0][1]
-    assert [c.item.label for c in notices[0][2].children] == ["Ban", "Dismiss"]
+    assert len(notices) == 1 and "Liên kết: `" + SCAM in notices[0][1]
+    assert [c.item.label for c in notices[0][2].children] == ["Ban", "Bỏ qua"]
     # The review case teaches nothing: dismissing it must not mark the scam safe.
     case = next(iter(w.feedback.cases.values()))
     assert case["url"] is None and case["image_hash"] is None
@@ -116,7 +116,7 @@ def test_scam_bot_burst_across_channels_is_banned():
 def test_known_scam_in_honeypot_is_banned_at_once():
     w = World()
     w.post(HONEYPOT, SCAM)
-    assert ("ban", 42, "Known scam link") in w.log
+    assert ("ban", 42, "Scam đã biết (liên kết)") in w.log
 
 
 def test_known_image_outside_honeypot_is_warned_even_in_normal_mode():

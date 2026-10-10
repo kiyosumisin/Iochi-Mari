@@ -38,13 +38,13 @@ def comment_embed(c: dict) -> discord.Embed:
         if body.count("```") % 2:  # don't leave a code block open after cutting
             body += "\n```"
     embed = discord.Embed(
-        title="Discord datamine",
+        title="Datamine Discord",
         url=c["html_url"],
         description=body,
         color=discord.Color.blurple(),
         timestamp=datetime.fromisoformat(c["created_at"]),
     )
-    embed.set_footer(text=f"Build commit {c['commit_id'][:7]} — full notes at the link above")
+    embed.set_footer(text=f"Bản build {c['commit_id'][:7]} — xem đầy đủ ở liên kết phía trên")
     return embed
 
 
@@ -57,33 +57,33 @@ class DatamineCommands(AdminCog):
 
     datamine_group = app_commands.Group(
         name="datamine",
-        description="Post new Discord datamine notes to a channel",
+        description="Đăng tin datamine mới của Discord vào một kênh",
         default_permissions=discord.Permissions(administrator=True),
         guild_only=True,
     )
 
-    @datamine_group.command(name="set", description="Choose the channel for datamine notes")
-    @app_commands.describe(channel="The channel to post datamine notes in")
+    @datamine_group.command(name="set", description="Chọn kênh đăng tin datamine")
+    @app_commands.describe(channel="Kênh để đăng tin datamine")
     async def datamine_set(self, interaction: discord.Interaction, channel: discord.TextChannel):
         self.bot.guild_settings.set_datamine_channel(interaction.guild.id, channel.id)
         await say(
             interaction,
-            f"Understood. Whenever Discord's builds reveal something new, I will bring "
-            f"word of it to {channel.mention}.",
+            f"Mari hiểu rồi ạ. Mỗi khi bản build mới của Discord hé lộ điều gì, "
+            f"Mari sẽ mang tin về {channel.mention}.",
         )
 
-    @datamine_group.command(name="off", description="Stop posting datamine notes")
+    @datamine_group.command(name="off", description="Ngừng đăng tin datamine")
     async def datamine_off(self, interaction: discord.Interaction):
         self.bot.guild_settings.set_datamine_channel(interaction.guild.id, 0)
-        await say(interaction, "Very well. I will keep the datamine notes to myself from now on.")
+        await say(interaction, "Vâng ạ. Từ giờ Mari sẽ không đăng tin datamine nữa.")
 
-    @datamine_group.command(name="status", description="Show where datamine notes are posted")
+    @datamine_group.command(name="status", description="Xem tin datamine đang được đăng ở đâu")
     async def datamine_status(self, interaction: discord.Interaction):
         cid = self.bot.guild_settings.get_datamine_channel(interaction.guild.id)
         msg = (
-            f"I am bringing datamine notes to <#{cid}>."
+            f"Mari đang đăng tin datamine vào <#{cid}>."
             if cid
-            else "I am not posting datamine notes in this server just now."
+            else "Hiện Mari chưa đăng tin datamine ở server này."
         )
         await say(interaction, msg)
 

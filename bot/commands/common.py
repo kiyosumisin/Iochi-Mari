@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 # Message shown when a non-owner tries to use an owner-only command.
-OWNER_ONLY_DENIAL = "Forgive me — this is something only my keeper may ask of me."
+OWNER_ONLY_DENIAL = "Mari xin lỗi, việc này chỉ có Sensei mới nhờ Mari làm được thôi ạ."
 
 
 async def is_owner(interaction: discord.Interaction) -> bool:
@@ -35,18 +35,18 @@ class MariCog(commands.Cog):
     ):
         if isinstance(error, app_commands.CommandOnCooldown):
             msg = (
-                f"Please allow me a brief moment to catch my breath — "
-                f"do try again in {error.retry_after:.0f}s."
+                f"Xin cho Mari nghỉ một chút để lấy lại hơi nhé. "
+                f"Bạn thử lại sau {error.retry_after:.0f} giây giúp Mari nha."
             )
         elif isinstance(error, app_commands.MissingPermissions):
             msg = (
-                "I am sorry, but it seems you do not have the standing for this. "
-                "Please speak with an administrator if you believe this is a mistake."
+                "Mari xin lỗi, có vẻ bạn chưa có quyền làm việc này. "
+                "Nếu bạn nghĩ đây là nhầm lẫn, xin hãy nói chuyện với quản trị viên nhé."
             )
         else:
             msg = (
-                f"Something unexpected happened, and I could not see your request through. "
-                f"I am truly sorry. `({error})`"
+                f"Đã có chuyện ngoài ý muốn xảy ra, nên Mari chưa làm xong việc bạn nhờ. "
+                f"Mari thật lòng xin lỗi. `({error})`"
             )
 
         try:

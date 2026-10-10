@@ -10,13 +10,13 @@ class OwnerCommands(MariCog):
     # -- Speak through Mari (owner only) -------------------------------------
     @app_commands.command(
         name="text",
-        description="Send a message or a server sticker through Mari (owner only)",
+        description="Nhờ Mari gửi tin nhắn hoặc sticker của server (chỉ dành cho Sensei)",
     )
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
-        message="What you would like me to say (optional if sending a sticker)",
-        sticker="A sticker from this server to send (start typing its name)",
-        channel="Where to send it (default: this channel)",
+        message="Điều bạn muốn Mari nói (có thể bỏ trống nếu gửi sticker)",
+        sticker="Sticker của server này (gõ vài chữ trong tên để tìm)",
+        channel="Gửi vào kênh nào (mặc định: kênh này)",
     )
     async def text(
         self,
@@ -31,7 +31,7 @@ class OwnerCommands(MariCog):
 
         target = channel or interaction.channel
         if not isinstance(target, (discord.TextChannel, discord.Thread)):
-            await say(interaction, "I am sorry, I can only speak within a text channel.")
+            await say(interaction, "Mari xin lỗi, Mari chỉ nói được trong kênh chữ thôi.")
             return
 
         stickers = []
@@ -46,8 +46,8 @@ class OwnerCommands(MariCog):
             if not found:
                 await say(
                     interaction,
-                    "I am sorry, I could not find a sticker by that name here. "
-                    "I am only able to send this server's own stickers.",
+                    "Mari xin lỗi, Mari không tìm thấy sticker nào có tên đó ở đây. "
+                    "Mari chỉ gửi được sticker của chính server này thôi.",
                 )
                 return
             stickers = [found]
@@ -55,7 +55,7 @@ class OwnerCommands(MariCog):
         if not message and not stickers:
             await say(
                 interaction,
-                "Please give me something to share — a message, a sticker, or both.",
+                "Sensei cho Mari biết cần gửi gì nhé: một tin nhắn, một sticker, hoặc cả hai.",
             )
             return
 
@@ -72,12 +72,12 @@ class OwnerCommands(MariCog):
         except discord.Forbidden:
             await say(
                 interaction,
-                "Forgive me — I have not been given leave to speak in that channel.",
+                "Xin thứ lỗi, Mari chưa được phép nói trong kênh đó.",
             )
         except discord.HTTPException as e:
             await say(
                 interaction,
-                f"Something went amiss and I could not speak. I am sorry. `({e})`",
+                f"Đã có trục trặc nên Mari chưa gửi được. Mari xin lỗi. `({e})`",
             )
 
     @text.autocomplete("sticker")

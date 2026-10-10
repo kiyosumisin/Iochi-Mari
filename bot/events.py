@@ -23,6 +23,12 @@ SPAM_CHANNELS = 3
 # Gemini must be at least this sure an honeypot image is a scam to ban on it.
 SCAM_IMAGE_CONFIDENCE = 0.8
 
+# How Mari names things in her (Vietnamese) messages.
+VERDICT_VI = {"phishing": "lừa đảo đánh cắp tài khoản", "malware": "mã độc",
+              "scam": "lừa đảo", "gambling": "cờ bạc"}
+KIND_VI = {"link": "liên kết", "image": "hình ảnh"}
+SUSPICION_VI = {"low": "thấp", "medium": "trung bình", "high": "cao"}
+
 
 def _fingerprint(data: bytes):
     """Image fingerprint (see core.image_scanner.dhash), or None if unreadable."""
@@ -342,12 +348,12 @@ class MessageHandler:
         susp = (inv or {}).get("suspicion", "unknown")
         await self._notify(
             guild, message.channel,
-            f"**Borderline case flagged for review** — {author} in "
+            f"**Một ca nghi ngờ cần mod xem giúp**: {author} ở "
             f"#{getattr(message.channel, 'name', '?')}\n"
-            f"Link: `{url}` | AI verdict: `{verdict}` "
-            f"(p={prob:.2f}) | suspicion: `{susp}`\n"
+            f"Liên kết: `{url}` | AI đánh giá: `{VERDICT_VI.get(verdict, verdict)}` "
+            f"(p={prob:.2f}) | mức nghi ngờ: `{SUSPICION_VI.get(susp, susp)}`\n"
             f"{explanation}\n"
-            f"Action: flagged for manual review (no automatic action taken).",
+            f"Mari chưa làm gì cả, xin mod xem giúp và quyết định ạ.",
             view=self._case_view(message, review=True, verdict=verdict, url=url),
         )
         logger.info(
@@ -429,12 +435,12 @@ class MessageHandler:
         try:
             await guild.ban(
                 author,
-                reason=f"Scam image detected ({verdict}) | file={filename}",
+                reason=f"Phát hiện ảnh scam ({verdict}) | tệp={filename}",
                 delete_message_days=1,
             )
             banned = True
             self._stat(guild, "auto_bans")
-            self._record(guild, author.id, reason=f"Scam image ({verdict}) | file={filename}")
+            self._record(guild, author.id, reason=f"Ảnh scam ({verdict}) | tệp={filename}")
             self._log_catch(guild, author, f"image:{verdict}", f"{filename} | {ocr_text[:120]}", channel)
             logger.info("Banned user %s (ID: %s) for scam image.", author, author.id)
         except discord.Forbidden:
@@ -444,11 +450,11 @@ class MessageHandler:
 
         # 3. Alert ngắn gọn — gửi vào kênh log riêng (fallback kênh hiện tại nếu chưa cấu hình)
         try:
-            action = "Message removed. User banned." if banned else "Message removed."
+            action = "Đã xóa tin nhắn và ban người gửi." if banned else "Đã xóa tin nhắn."
             alert = (
-                f"**I have found a scam image** from **{author}** — Verdict: `{verdict}`\n"
-                f"Image: `{filename}`\n"
-                f"{action}\nPlease watch over yourselves, everyone."
+                f"**Mari đã tìm thấy một ảnh scam** từ **{author}** (kết quả: `{VERDICT_VI.get(verdict, verdict)}`)\n"
+                f"Ảnh: `{filename}`\n"
+                f"{action}\nMọi người nhớ giữ gìn bản thân nhé."
             )
             await self._notify(guild, channel, alert,
                                view=self._case_view(message, verdict=verdict, image_hash=image_hash))
@@ -461,17 +467,17 @@ class MessageHandler:
             if log_channel:
                 try:
                     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                    preview = ocr_text[:200].replace("\n", " ") if ocr_text else "(empty)"
+                    preview = ocr_text[:200].replace("\n", " ") if ocr_text else "(trống)"
                     log_msg = (
                         f"```\n"
-                        f"[SCAM IMAGE LOG] {ts}\n"
-                        f"Server  : {guild.name}\n"
-                        f"Channel : #{channel.name}\n"
-                        f"User    : {author} (ID: {author.id})\n"
-                        f"File    : {filename}\n"
-                        f"Verdict : {verdict}\n"
-                        f"OCR     : {preview}\n"
-                        f"Banned  : {banned}\n"
+                        f"[NHẬT KÝ ẢNH SCAM] {ts}\n"
+                        f"Server     : {guild.name}\n"
+                        f"Kênh       : #{channel.name}\n"
+                        f"Người dùng : {author} (ID: {author.id})\n"
+                        f"Tệp        : {filename}\n"
+                        f"Kết quả    : {verdict}\n"
+                        f"Chữ trong ảnh: {preview}\n"
+                        f"Đã ban     : {'Có' if banned else 'Không'}\n"
                         f"```"
                     )
                     await log_channel.send(log_msg)
@@ -587,14 +593,14 @@ class MessageHandler:
             except Exception as exc:
                 logger.error("Honeypot ban failed for %s: %s", author, exc)
 
-        action = "Message removed. User banned." if banned else "Message removed."
+        action = "Đã xóa tin nhắn và ban người gửi." if banned else "Đã xóa tin nhắn."
         headline = headline or (
-            f"**Someone slipped into the trap.** I found **{author}** where no honest member should wander."
+            f"**Có kẻ đã sa vào bẫy.** Mari bắt gặp **{author}** ở nơi mà người ngay thẳng sẽ không bước vào."
         )
         await self._notify(
             guild, message.channel,
             f"{headline}\n"
-            f"Reason: `{reason}`\n{action}\nPlease rest easy, everyone — I am keeping watch over this place.",
+            f"Lý do: `{reason}`\n{action}\nMọi người cứ yên tâm nhé, Mari vẫn đang canh giữ nơi này.",
             view=self._case_view(message, verdict=reason, **(evidence or {})) if banned else None,
         )
 
@@ -615,7 +621,7 @@ class MessageHandler:
 
         is_scam, category, detail, evidence = await self._honeypot_detect_scam(message)
         if not is_scam and len(spread) >= SPAM_CHANNELS:
-            is_scam, category, detail = True, "spread", f"{len(spread)} channels in {SPAM_WINDOW_S}s"
+            is_scam, category, detail = True, "spread", f"{len(spread)} kênh trong {SPAM_WINDOW_S} giây"
         if is_scam:
             await self._honeypot_ban(
                 message,
@@ -635,7 +641,7 @@ class MessageHandler:
         if count > self.honeypot_warn_limit:
             await self._honeypot_ban(
                 message,
-                reason=f"Honeypot: kept posting after {self.honeypot_warn_limit} warnings",
+                reason=f"Honeypot: vẫn đăng sau {self.honeypot_warn_limit} lần nhắc",
                 already_deleted=True,
             )
         else:
@@ -645,9 +651,9 @@ class MessageHandler:
             # interaction, and this fires from a normal message the bot reacts to.
             try:
                 await message.channel.send(
-                    f"{author.mention}, please — you mustn't post here; this place is set aside to "
-                    f"catch ill-meaning bots. This is warning {count}/{self.honeypot_warn_limit}. "
-                    f"I would be so sad to have to see you out, so do take care.",
+                    f"{author.mention}, xin bạn đừng đăng ở đây nhé. Kênh này được dành riêng để bắt "
+                    f"những bot có ý xấu. Đây là lần nhắc {count}/{self.honeypot_warn_limit}. "
+                    f"Mari sẽ buồn lắm nếu phải mời bạn ra, nên bạn cẩn thận giúp Mari nha.",
                     delete_after=15,
                 )
             except discord.Forbidden:
@@ -721,9 +727,10 @@ class MessageHandler:
         guild, author, channel = message.guild, message.author, message.channel
         where = f"#{getattr(channel, 'name', '?')}"
         detail = evidence.get("url") or ", ".join(a.filename for a in message.attachments)
-        headline = f"**I recognised a known scam {kind}** from **{author}** in {where}."
+        headline = f"**Mari nhận ra một {KIND_VI[kind]} scam đã biết** từ **{author}** ở {where}."
         if channel.id == honeypot_id or len(spread) >= SPAM_CHANNELS:
-            await self._honeypot_ban(message, reason=f"Known scam {kind}", catch=(f"{kind}:known", detail),
+            await self._honeypot_ban(message, reason=f"Scam đã biết ({KIND_VI[kind]})",
+                                     catch=(f"{kind}:known", detail),
                                      evidence=evidence, headline=headline)
             return True
 
@@ -734,7 +741,7 @@ class MessageHandler:
         limit = self.honeypot_warn_limit
         count = self._bump_warn(f"ks:{author.id}")
         if count > limit:
-            await self._honeypot_ban(message, reason=f"Kept posting known scams after {limit} warnings",
+            await self._honeypot_ban(message, reason=f"Vẫn đăng scam đã biết sau {limit} lần nhắc",
                                      already_deleted=True, catch=(f"{kind}:known", detail),
                                      evidence=evidence, headline=headline)
             return True
@@ -742,20 +749,20 @@ class MessageHandler:
         self._stat(guild, "links_blocked")
         try:
             await channel.send(
-                f"{author.mention}, I have removed your message: it carried a {kind} known to be a scam. "
-                f"If you were warning everyone, thank you, truly; please describe it in words rather "
-                f"than posting it again. This is notice {count}/{limit}.",
+                f"{author.mention}, Mari đã gỡ tin nhắn của bạn vì nó có một {KIND_VI[kind]} đã được biết là scam. "
+                f"Nếu bạn đăng để cảnh báo mọi người thì Mari thật lòng cảm ơn bạn; lần sau bạn chỉ cần "
+                f"kể lại bằng lời, đừng đăng lại nó nhé. Đây là lần nhắc {count}/{limit}.",
                 delete_after=20,
             )
         except discord.Forbidden:
             logger.warning("Cannot post known-scam notice in %s", channel)
         # No evidence on this case: "Dismiss" means "this member meant well",
         # not "this scam is safe", so it must not teach Mari anything.
-        link = f"\nLink: `{evidence['url']}`" if "url" in evidence else ""
+        link = f"\nLiên kết: `{evidence['url']}`" if "url" in evidence else ""
         await self._notify(
             guild, channel,
-            f"{headline}\nI removed it and gently warned them ({count}/{limit}), since they may only "
-            f"have been warning others.{link}\nIf they meant harm, you may ban them below.",
+            f"{headline}\nMari đã gỡ nó và nhẹ nhàng nhắc nhở ({count}/{limit}), vì có thể bạn ấy chỉ "
+            f"đang cảnh báo mọi người.{link}\nNếu bạn ấy có ý xấu, mod có thể ban bằng nút bên dưới.",
             view=self._case_view(message, review=True, verdict=f"known scam {kind}"),
         )
         return True
@@ -772,8 +779,8 @@ class MessageHandler:
             # burst is now landing in other channels too -> scam bot.
             await self._honeypot_ban(
                 message,
-                reason=f"Honeypot: same post spread across {len(spread)} channels",
-                catch=("spread", f"{len(spread)} channels in {SPAM_WINDOW_S}s"),
+                reason=f"Honeypot: cùng một bài rải ra {len(spread)} kênh",
+                catch=("spread", f"{len(spread)} kênh trong {SPAM_WINDOW_S} giây"),
             )
 
     async def _check_url(self, message, url: str, guild, threshold) -> bool:
@@ -818,7 +825,7 @@ class MessageHandler:
         except discord.Forbidden:
             await self._notify(
                 guild, message.channel,
-                "Mari does not have sufficient permissions to take action.",
+                "Mari chưa được cấp đủ quyền để xử lý việc này.",
             )
         return False
 
@@ -832,8 +839,9 @@ class MessageHandler:
         self._reset_warns(message.author.id)
         await self._notify(
             guild, message.channel,
-            f"I am sorry — I had to see {message.author.mention} out for {verdict}. "
-            f"I take no joy in it; I only wish to keep everyone here safe.\nLink: `{url}`",
+            f"Mari xin lỗi, Mari đã phải mời {message.author.mention} rời server vì "
+            f"{VERDICT_VI.get(verdict, verdict)}. Mari không vui gì khi làm vậy, chỉ mong giữ an toàn "
+            f"cho mọi người ở đây.\nLiên kết: `{url}`",
             view=self._case_view(message, verdict=verdict, url=url),
         )
 
@@ -843,25 +851,25 @@ class MessageHandler:
         self._stat(guild, "links_blocked")
         warn_count = self._add_warn(message.author.id)
         duration = self.timeout_durations[min(warn_count - 1, len(self.timeout_durations) - 1)].strip()
-        reason = f"{verdict} content | warn {warn_count}/5"
+        reason = f"nội dung {VERDICT_VI.get(verdict, verdict)} | nhắc {warn_count}/5"
         until = datetime.now(timezone.utc) + self._parse_duration(duration)
         await message.author.timeout(until, reason=reason)
         self._stat(guild, "warnings")
         self._record(guild, message.author.id, reason=reason, url=url)
         await self._notify(
             guild, message.channel,
-            f"{message.author.mention}, I must ask you to step back for a little while "
-            f"({duration}) — {reason}. Please be mindful; I would far rather guide you than scold you.",
+            f"{message.author.mention}, Mari xin phép mời bạn tạm nghỉ một lát ({duration}) vì "
+            f"{reason}. Bạn để ý giúp Mari nhé, Mari thà nhẹ nhàng nhắc bạn còn hơn phải trách bạn.",
         )
         if warn_count >= 5:
-            await message.author.ban(reason=f"Reached {warn_count} warnings")
+            await message.author.ban(reason=f"Đã bị nhắc {warn_count} lần")
             self._reset_warns(message.author.id)
             self._stat(guild, "auto_bans")
-            self._record(guild, message.author.id, reason=f"Banned after {warn_count} warnings", url=url)
+            self._record(guild, message.author.id, reason=f"Bị ban sau {warn_count} lần nhắc", url=url)
             await self._notify(
                 guild, message.channel,
-                f"I am truly sorry. After {warn_count} warnings I had no choice but to see "
-                f"{message.author.mention} out. I gave every chance I could.",
+                f"Mari thật lòng xin lỗi. Sau {warn_count} lần nhắc, Mari đành phải mời "
+                f"{message.author.mention} rời server. Mari đã cho bạn ấy mọi cơ hội có thể.",
             )
 
     async def _check_image(self, message, attachment):

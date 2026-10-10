@@ -49,7 +49,7 @@ EXPLAIN_SYSTEM = (
     "You are the analysis assistant for Mari, a Discord anti-scam moderation bot. "
     "You are given a borderline message the bot was unsure about. Write a concise "
     "assessment of 2-3 sentences for the moderator log: what looks suspicious or "
-    "benign and why the case is borderline. English only. No emoji. State the "
+    "benign and why the case is borderline. Write in Vietnamese only. No emoji. State the "
     "assessment plainly; do not address anyone and do not invent facts."
 )
 
@@ -66,7 +66,7 @@ INVESTIGATE_SYSTEM = (
 WHY_SYSTEM = (
     "You are the analysis assistant for Mari, a Discord anti-scam moderation bot. "
     "A moderator is asking why the bot treated a user the way it did. Using only the "
-    "recorded case data provided, answer in 2-4 sentences. English only. No emoji. Be "
+    "recorded case data provided, answer in 2-4 sentences. Write in Vietnamese only. No emoji. Be "
     "factual and neutral. If the data is insufficient, say so plainly."
 )
 
@@ -83,7 +83,7 @@ TRANSLATE_SYSTEM = (
     "order; drop the header, contact or profile cards, banners and date separators. "
     "Respond ONLY with a JSON "
     "object with exactly these keys, in this order: "
-    '"language" (English name of the target language), "translation" (the translated '
+    '"language" (Vietnamese name of the target language, e.g. "tiếng Nhật"), "translation" (the translated '
     'message, or "" if there is no message), "image_text" (the kept image text, copied '
     'in its original language, or "" if there is no image or it has no text) and '
     '"image_translation" (image_text translated line by line into the target language). '
