@@ -26,7 +26,7 @@ class ChatCog(MariCog):
         super().__init__(bot)
         self._history: dict[int, deque] = {}  # channel id -> (role, text) turns, memory only
         self._last: dict[int, float] = {}     # channel id -> time of the last turn
-        self._answers: set[int] = set()       # ids of Mari's chat replies (reply to continue)
+        self._answers: deque = deque(maxlen=200)  # ids of Mari's chat replies (reply to continue)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -41,13 +41,14 @@ class ChatCog(MariCog):
         sensei = await is_sensei(self.bot, message.author)
         text = (message.content[call.end():] if call else message.content).strip()
         agent = getattr(self.bot, "agent", None)
+        can_chat = sensei and agent and agent.enabled
         images = []
-        if sensei and agent and agent.enabled:
+        if can_chat:
             images = await message_images(message, MAX_IMAGES)
             if not images and call and ref:  # "Mari ơi, ..." as a reply to someone's picture
                 target = await self._referenced(message)
                 images = await message_images(target, MAX_IMAGES) if target else []
-        if sensei and (text or images) and agent and agent.enabled:
+        if can_chat and (text or images):
             await self._chat(message, text or "Sensei gửi em hình này.", agent, images)
         elif call:
             await self._reply(message, to_reader(
@@ -84,9 +85,7 @@ class ChatCog(MariCog):
         for part in split_text(answer, 2000)[:3]:
             sent = await self._reply(message, part)
             if sent:
-                self._answers.add(sent.id)
-        if len(self._answers) > 500:
-            self._answers = set(sorted(self._answers)[-200:])
+                self._answers.append(sent.id)
 
     @staticmethod
     async def _reply(message: discord.Message, text: str):

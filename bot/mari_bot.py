@@ -98,10 +98,6 @@ class MariBot(commands.Bot):
         except Exception as exc:
             logger.warning("Heartbeat ping failed: %s", exc)
 
-    @heartbeat.before_loop
-    async def _heartbeat_wait(self):
-        await self.wait_until_ready()
-
     async def on_ready(self):
         print(f"Mari is here: {self.user}")
         logger.info(

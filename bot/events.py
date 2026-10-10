@@ -161,14 +161,13 @@ class MessageHandler:
         except Exception as exc:
             logger.warning("Failed to save warnings.json: %s", exc)
 
+    # Warn counters by key: str(user_id) for gambling links, "hp:<id>" for honeypot
+    # posts, "ks:<id>" for known scams posted outside the honeypot.
     def _bump_warn(self, key: str) -> int:
         count = int(self.warns.get(key, 0)) + 1
         self.warns[key] = count
         self._save_warns()
         return count
-
-    def _add_warn(self, user_id: int):
-        return self._bump_warn(str(user_id))
 
     def _parse_duration(self, value: str) -> timedelta:
         value = value.strip().lower()
@@ -182,20 +181,8 @@ class MessageHandler:
             return timedelta(seconds=int(value[:-1]))
         return timedelta(minutes=10)
 
-    def _reset_warns(self, user_id: int):
-        key = str(user_id)
-        if key in self.warns:
-            self.warns.pop(key, None)
-            self._save_warns()
-
-    def _add_honeypot_warn(self, user_id: int) -> int:
-        """Separate warn counter for accidental posts in the honeypot channel."""
-        return self._bump_warn(f"hp:{user_id}")
-
-    def _reset_honeypot_warn(self, user_id: int):
-        key = f"hp:{user_id}"
-        if key in self.warns:
-            self.warns.pop(key, None)
+    def _reset_warn(self, key: str):
+        if self.warns.pop(key, None) is not None:
             self._save_warns()
 
     def _stat(self, guild, key: str, amount: int = 1):
@@ -579,7 +566,7 @@ class MessageHandler:
                 banned = True
                 self._stat(guild, "auto_bans")
                 self._record(guild, author.id, reason=reason)
-                self._reset_honeypot_warn(author.id)
+                self._reset_warn(f"hp:{author.id}")
                 if catch:
                     self._log_catch(guild, author, catch[0], catch[1], message.channel)
                 logger.info("Honeypot banned %s (ID: %s) | %s", author, author.id, reason)
@@ -632,7 +619,7 @@ class MessageHandler:
         except (discord.NotFound, discord.Forbidden):
             pass
 
-        count = self._add_honeypot_warn(author.id)
+        count = self._bump_warn(f"hp:{author.id}")
         if count > self.honeypot_warn_limit:
             await self._honeypot_ban(
                 message,
@@ -831,7 +818,7 @@ class MessageHandler:
         self._stat(guild, "auto_bans")
         self._record(guild, message.author.id, reason=verdict, url=url)
         self._log_catch(guild, message.author, f"url:{verdict}", url, message.channel)
-        self._reset_warns(message.author.id)
+        self._reset_warn(str(message.author.id))
         await self._notify(
             guild, message.channel,
             f"Mari xin lỗi, Mari đã phải mời {message.author.mention} rời server vì "
@@ -844,7 +831,7 @@ class MessageHandler:
         """Delete + escalating timeout (TIMEOUT_DURATIONS); ban at the 5th warning."""
         await message.delete()
         self._stat(guild, "links_blocked")
-        warn_count = self._add_warn(message.author.id)
+        warn_count = self._bump_warn(str(message.author.id))
         duration = self.timeout_durations[min(warn_count - 1, len(self.timeout_durations) - 1)].strip()
         reason = f"nội dung {VERDICT_VI.get(verdict, verdict)} | nhắc {warn_count}/5"
         until = datetime.now(timezone.utc) + self._parse_duration(duration)
@@ -858,7 +845,7 @@ class MessageHandler:
         )
         if warn_count >= 5:
             await message.author.ban(reason=f"Đã bị nhắc {warn_count} lần")
-            self._reset_warns(message.author.id)
+            self._reset_warn(str(message.author.id))
             self._stat(guild, "auto_bans")
             self._record(guild, message.author.id, reason=f"Bị ban sau {warn_count} lần nhắc", url=url)
             await self._notify(
