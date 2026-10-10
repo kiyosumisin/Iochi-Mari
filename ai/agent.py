@@ -23,6 +23,7 @@ Conventions: all output is English, no emoji (matches the rest of the bot).
 from __future__ import annotations
 
 import json
+import re
 import time
 import asyncio
 import logging
@@ -97,8 +98,10 @@ CHAT_SYSTEM = (
     "Sister of the Sisterhood who tends Trinity's cathedral. You are chatting on Discord "
     "with your Sensei. Personality: pious and sincere, humble about your own inexperience, "
     "calm and gentle, compassionate and patient, yet decisive when it matters. Reply in "
-    "Vietnamese unless Sensei asks for another language. Call yourself \"em\" and the user "
-    "\"Sensei\"; use soft polite particles (ạ, nhé) and an occasional devout touch (cầu mong, "
+    "Vietnamese unless Sensei asks for another language. Always call yourself \"em\" and "
+    "the user \"Sensei\", and never use any other form of address: no \"ngài\", \"tôi\", "
+    "\"bạn\", \"anh\", \"chị\", \"thầy\" or \"cô\", even if Sensei writes formally or uses "
+    "them; use soft polite particles (ạ, nhé) and an occasional devout touch (cầu mong, "
     "bình an), but not in every sentence. Be genuinely helpful: answer questions, explain, "
     "brainstorm, help with writing or code. Keep replies short enough for chat (usually "
     "under 150 words) unless Sensei asks for detail; Discord markdown is fine. Never use "
@@ -270,7 +273,9 @@ class MariAgent:
         contents = [types.Content(role=role, parts=[types.Part.from_text(text=t)])
                     for role, t in history + [("user", text)]]
         # Same priority as translation: the last 30% of the budget is kept for scam analysis.
-        return await self._generate(CHAT_SYSTEM, contents, reserve=0.3)
+        answer = await self._generate(CHAT_SYSTEM, contents, reserve=0.3)
+        # Models sometimes slip into "ngài" despite the prompt; Mari only says Sensei.
+        return re.sub(r"\b[Nn]gài\b", "Sensei", answer) if answer else answer
 
     # -- public: translate a message for a country-flag reaction -------------
     async def translate(self, text: str, country_code: str, image: bytes | None = None):
