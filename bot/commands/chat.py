@@ -1,5 +1,7 @@
 """Talking to Mari. Anyone can call "Mari ơi" to see she is there; her owner
-can also chat with her (Gemini): "Mari ơi, <anything>", or reply to her answer."""
+can also chat with her (Gemini): "Mari ơi, <anything>", or reply to her answer.
+Pictures attached to Sensei's message, or in the message Sensei replies to with
+"Mari ơi ...", are shown to her too."""
 
 import re
 import time
@@ -10,12 +12,13 @@ from discord.ext import commands
 
 from bot.voice import is_sensei, to_reader
 from .common import MariCog
-from .translate import split_text
+from .translate import message_images, split_text
 
 # "Mari ơi", "mari oi", "Mari ơiii!" ... at the start of a message.
 _CALL = re.compile(r"\s*mari\s+[oơ]i+\b[\s,.!?…:]*", re.IGNORECASE)
 HISTORY_TURNS = 12   # messages (Sensei's and Mari's) remembered per channel
 FORGET_AFTER = 1800  # seconds of silence before Mari starts a fresh conversation
+MAX_IMAGES = 3      # pictures per message (the Gemini relay caps a request at 4.5 MB)
 
 
 class ChatCog(MariCog):
@@ -38,26 +41,45 @@ class ChatCog(MariCog):
         sensei = await is_sensei(self.bot, message.author)
         text = (message.content[call.end():] if call else message.content).strip()
         agent = getattr(self.bot, "agent", None)
-        if sensei and text and agent and agent.enabled:
-            await self._chat(message, text, agent)
+        images = []
+        if sensei and agent and agent.enabled:
+            images = await message_images(message, MAX_IMAGES)
+            if not images and call and ref:  # "Mari ơi, ..." as a reply to someone's picture
+                target = await self._referenced(message)
+                images = await message_images(target, MAX_IMAGES) if target else []
+        if sensei and (text or images) and agent and agent.enabled:
+            await self._chat(message, text or "Sensei gửi em hình này.", agent, images)
         elif call:
             await self._reply(message, to_reader(
                 "Vâng, Mari đây ạ. Bạn cần Mari giúp gì không? Cứ gọi Mari bất cứ lúc nào nhé, "
                 "Mari luôn sẵn lòng.", sensei))
 
-    async def _chat(self, message: discord.Message, text: str, agent):
+    @staticmethod
+    async def _referenced(message: discord.Message):
+        """The message being replied to, or None if it is gone."""
+        ref = message.reference
+        if isinstance(ref.resolved, discord.Message):
+            return ref.resolved
+        try:
+            return await message.channel.fetch_message(ref.message_id)
+        except discord.HTTPException:
+            return None
+
+    async def _chat(self, message: discord.Message, text: str, agent, images=()):
         cid = message.channel.id
         if time.time() - self._last.get(cid, 0) > FORGET_AFTER:
             self._history[cid] = deque(maxlen=HISTORY_TURNS)
         history = self._history.setdefault(cid, deque(maxlen=HISTORY_TURNS))
 
         async with message.channel.typing():
-            answer = await agent.chat(list(history), text[:4000])
+            answer = await agent.chat(list(history), text[:4000], images)
         if not answer:
             await self._reply(message, "Em xin lỗi Sensei, lúc này em chưa trả lời được. "
                                        "Sensei thử lại sau một chút nhé.")
             return
-        history.extend([("user", text[:4000]), ("model", answer)])
+        # Pictures are not kept: later turns only know that one was shown.
+        seen = f" [kèm {len(images)} ảnh]" if images else ""
+        history.extend([("user", text[:4000] + seen), ("model", answer)])
         self._last[cid] = time.time()
         for part in split_text(answer, 2000)[:3]:
             sent = await self._reply(message, part)

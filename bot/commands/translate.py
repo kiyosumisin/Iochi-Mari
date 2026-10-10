@@ -41,17 +41,19 @@ def split_text(text: str, limit: int = 4000) -> list[str]:
     return chunks
 
 
-async def first_image(message):
-    """The message's first image attachment as shrunk JPEG bytes, or None.
+async def message_images(message, limit: int = 1) -> list[bytes]:
+    """Up to `limit` of the message's image attachments as shrunk JPEG bytes.
     Gemini reads the picture itself: far cleaner than OCR on phone photos of screens."""
+    out = []
     for a in message.attachments:
+        if len(out) >= limit:
+            break
         if (a.content_type or "").startswith("image/") and a.size <= 20_000_000:
             try:
-                return await asyncio.to_thread(shrink_image, await a.read())
+                out.append(await asyncio.to_thread(shrink_image, await a.read()))
             except Exception as exc:
-                logger.warning("Could not read image for translation: %s", exc)
-                return None
-    return None
+                logger.warning("Could not read image %s: %s", a.filename, exc)
+    return out
 
 
 class TranslateCog(MariCog):
@@ -88,7 +90,7 @@ class TranslateCog(MariCog):
         except discord.HTTPException:
             return
         text = message.content.strip()
-        image = await first_image(message)
+        image = next(iter(await message_images(message)), None)
         if not text and image is None:
             return
 

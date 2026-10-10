@@ -267,11 +267,15 @@ class MariAgent:
             return None
 
     # -- public: chat with the owner ("Mari ơi ...") -------------------------
-    async def chat(self, history: list[tuple[str, str]], text: str):
+    async def chat(self, history: list[tuple[str, str]], text: str, images: list[bytes] = ()):
         """Mari's reply to her owner, or None. `history` is the recent
-        [(role, text)] with role "user" or "model". Not logged (private chat)."""
-        contents = [types.Content(role=role, parts=[types.Part.from_text(text=t)])
-                    for role, t in history + [("user", text)]]
+        [(role, text)] with role "user" or "model"; `images` (JPEG bytes) go with
+        the new message. Not logged (private chat)."""
+        contents = [types.Content(role=role, parts=[types.Part.from_text(text=t)]) for role, t in history]
+        contents.append(types.Content(role="user", parts=[
+            *(types.Part.from_bytes(data=img, mime_type="image/jpeg") for img in images),
+            types.Part.from_text(text=text),
+        ]))
         # Same priority as translation: the last 30% of the budget is kept for scam analysis.
         answer = await self._generate(CHAT_SYSTEM, contents, reserve=0.3)
         # Models sometimes slip into "ngài" despite the prompt; Mari only says Sensei.
