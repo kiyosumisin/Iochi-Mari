@@ -281,14 +281,18 @@ class ChatCog(MariCog):
         text = (message.content[call.end():] if call else message.content).strip()
         agent = getattr(self.bot, "agent", None)
         can_chat = sensei and agent and agent.enabled
-        images = []
+        images, about = [], ""
         if can_chat:
             images = await message_images(message, MAX_IMAGES)
-            if not images and call and ref:  # "Mari ơi, ..." as a reply to someone's picture
+            if call and ref and not continuing:  # "Mari, ..." as a reply to someone's message
                 target = await self._referenced(message)
-                images = await message_images(target, MAX_IMAGES) if target else []
+                if target:
+                    # Who and what Sensei is pointing at ("bạn này", "ban người này", this picture).
+                    about = (f"[Sensei đang trả lời tin nhắn của {target.author.display_name} "
+                             f"(<@{target.author.id}>): \"{(target.content or '')[:500]}\"]\n")
+                    images = images or await message_images(target, MAX_IMAGES)
         if can_chat and (text or images):
-            await self._chat(message, text or "Sensei gửi em hình này.", agent, images)
+            await self._chat(message, about + (text or "Sensei gửi em hình này."), agent, images)
         elif call:
             await self._reply(message, to_reader(
                 "Vâng, Mari đây ạ. Bạn cần Mari giúp gì không? Cứ gọi Mari bất cứ lúc nào nhé, "
