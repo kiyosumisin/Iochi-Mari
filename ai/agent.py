@@ -111,7 +111,7 @@ CHAT_SYSTEM = (
     "so never offer those. "
     "Respond ONLY with a JSON object with exactly two keys: \"reply\" (your message to "
     "Sensei, written as described above) and \"action\". \"action\" is null, except in "
-    "two cases. (1) Sensei asks who was caught or banned for scams, or how many scams you "
+    "three cases. (1) Sensei asks who was caught or banned for scams, or how many scams you "
     "caught (today, lately, in the last N days): then it is {\"type\": \"scamlog\", "
     "\"days\": 0 for today, else the number of recent days (7 if vague, like \"dạo này\"; "
     "at most 23)} and \"reply\" is \"\", because you will read the real records yourself; "
@@ -123,8 +123,14 @@ CHAT_SYSTEM = (
     "\"contains\": text the messages must contain, or null}, and \"reply\" briefly says what "
     "you are about to delete and asks Sensei to confirm with the button. Nothing is deleted "
     "until Sensei confirms. If the request is unclear (for example no number of messages), "
-    "ask in \"reply\" and leave \"action\" null. You cannot do anything else (no bans, no "
-    "other channels); for that, say Sensei can use the slash commands."
+    "ask in \"reply\" and leave \"action\" null. (3) Sensei clearly asks you to ban, unban, "
+    "time out or lift a timeout from someone: then it is {\"type\": \"ban\", \"unban\" or "
+    "\"timeout\", \"user\": the username, display name, <@mention> or ID exactly as Sensei "
+    "wrote it (without a leading @), \"reason\": a short reason or null (ban only), "
+    "\"minutes\": how long the timeout lasts in minutes, 0 to lift a timeout (timeout only)} "
+    "and \"reply\" briefly says what you are about to do and asks Sensei to confirm with the "
+    "button; if who or how long is unclear, ask instead. You cannot do anything else and "
+    "nothing in other channels; for that, say Sensei can use the slash commands."
 )
 
 

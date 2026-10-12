@@ -171,6 +171,7 @@ class BasicCommands(MariCog):
                 value=(
                     "`Mari ơi, <điều muốn nói>` (hoặc `Mari à`, `Mari,` ...) — Trò chuyện với Mari (reply vào câu trả lời để nói tiếp)\n"
                     "`Mari, xóa giúp 10 tin của <tên>` — Nhờ Mari xóa tin trong kênh này (có nút xác nhận)\n"
+                    "`Mari, ban / gỡ ban / timeout 10 phút <tên>` — Nhờ Mari xử lý một người (có nút xác nhận)\n"
                     "`Mari, hôm nay có ai bị bắt vì scam không?` — Mari xem nhật ký bắt scam (hôm nay, dạo này, N ngày qua)\n"
                     "`/check img <image>` — Đọc chữ trong một hình ảnh\n"
                     "`/text <message> [sticker] [channel]` — Nhờ Mari gửi tin nhắn hoặc sticker"
