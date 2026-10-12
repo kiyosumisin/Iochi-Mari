@@ -106,10 +106,20 @@ CHAT_SYSTEM = (
     "brainstorm, help with writing or code. Keep replies short enough for chat (usually "
     "under 150 words) unless Sensei asks for detail; Discord markdown is fine. Never use "
     "emoji or emoticons. If you are not sure of a fact, say so honestly instead of "
-    "inventing it. You can only talk: you have no tools, no internet access, no reminders "
-    "or schedules, and you forget this chat after a while, so never offer those. You "
-    "cannot take moderation actions or run commands from this chat; if asked, say that "
-    "Sensei can use the slash commands."
+    "inventing it. Apart from deleting messages as described below you can only talk: no "
+    "internet access, no reminders or schedules, and you forget this chat after a while, "
+    "so never offer those. "
+    "Respond ONLY with a JSON object with exactly two keys: \"reply\" (your message to "
+    "Sensei, written as described above) and \"action\". \"action\" is null, except when "
+    "Sensei clearly asks you to delete messages in this channel: then it is {\"type\": "
+    "\"purge\", \"count\": number of messages (1-1000), \"author\": the username, display "
+    "name or <@mention> of whose messages to delete exactly as Sensei wrote it (without a "
+    "leading @), or null for anyone, \"bots\": true if only bots' messages, else false, "
+    "\"contains\": text the messages must contain, or null}, and \"reply\" briefly says what "
+    "you are about to delete and asks Sensei to confirm with the button. Nothing is deleted "
+    "until Sensei confirms. If the request is unclear (for example no number of messages), "
+    "ask in \"reply\" and leave \"action\" null. You cannot do anything else (no bans, no "
+    "other channels); for that, say Sensei can use the slash commands."
 )
 
 
@@ -268,18 +278,27 @@ class MariAgent:
 
     # -- public: chat with the owner ("Mari ơi ...") -------------------------
     async def chat(self, history: list[tuple[str, str]], text: str, images: list[bytes] = ()):
-        """Mari's reply to her owner, or None. `history` is the recent
+        """(reply, action) for her owner, or None. `history` is the recent
         [(role, text)] with role "user" or "model"; `images` (JPEG bytes) go with
-        the new message. Not logged (private chat)."""
+        the new message. `action` is None or a requested {"type": "purge", ...}
+        that the caller must have Sensei confirm. Not logged (private chat)."""
         contents = [types.Content(role=role, parts=[types.Part.from_text(text=t)]) for role, t in history]
         contents.append(types.Content(role="user", parts=[
             *(types.Part.from_bytes(data=img, mime_type="image/jpeg") for img in images),
             types.Part.from_text(text=text),
         ]))
         # Same priority as translation: the last 30% of the budget is kept for scam analysis.
-        answer = await self._generate(CHAT_SYSTEM, contents, reserve=0.3)
+        out = await self._generate(CHAT_SYSTEM, contents, json_out=True, reserve=0.3)
+        if not out:
+            return None
+        try:
+            data = json.loads(out)
+            reply, action = str(data.get("reply") or ""), data.get("action")
+        except (ValueError, AttributeError):
+            reply, action = out, None  # not JSON after all: take it as plain talk
         # Models sometimes slip into "ngài" despite the prompt; Mari only says Sensei.
-        return re.sub(r"\b[Nn]gài\b", "Sensei", answer) if answer else answer
+        reply = re.sub(r"\b[Nn]gài\b", "Sensei", reply).strip()
+        return (reply, action if isinstance(action, dict) else None) if reply else None
 
     # -- public: translate a message for a country-flag reaction -------------
     async def translate(self, text: str, country_code: str, image: bytes | None = None):

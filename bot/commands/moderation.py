@@ -14,6 +14,37 @@ logger = logging.getLogger(__name__)
 SCAN_LIMIT = 1000  # how far back /purge looks for messages matching its filters
 
 
+async def delete_latest(channel, count: int, match, *, scan_limit: int, before=None, label: str = "") -> int:
+    """Delete the latest `count` messages for which match(message) is true, looking
+    back at most `scan_limit` messages (older than `before`, if given) and stopping
+    as soon as there are enough. Returns how many were deleted. Used by /purge and
+    by Mari's chat ("Mari, xóa giúp ...")."""
+    started = time.monotonic()
+    picked = []
+    async for m in channel.history(limit=scan_limit, before=before):
+        if match(m):
+            picked.append(m)
+            if len(picked) >= count:
+                break
+    # Bulk delete takes 100 at a time but only messages under 14 days old;
+    # older ones must go one by one (slow, rate-limited).
+    cutoff = discord.utils.utcnow() - timedelta(days=14)
+    recent = [m for m in picked if m.created_at > cutoff]
+    for i in range(0, len(recent), 100):
+        await channel.delete_messages(recent[i:i + 100])
+    for m in picked[len(recent):]:
+        await m.delete()
+    logger.info("Purge | #%s | %s | deleted=%s (%s old) | %.1fs", channel, label, len(picked),
+                len(picked) - len(recent), time.monotonic() - started)
+    return len(picked)
+
+
+def purge_scope(author: str | None, bots: bool, contains: str | None) -> str:
+    """How Mari describes what she deletes, e.g. ' của X có chứa "y"'."""
+    return ((f" của {author}" if author else "") + (" của bot" if bots else "")
+            + (f' có chứa "{contains}"' if contains else ""))
+
+
 class ModerationCommands(AdminCog):
     # -- Purge ---------------------------------------------------------------
     @app_commands.command(name="purge", description="Xóa các tin gần đây; có thể chỉ xóa tin của một người, của bot, hoặc có chứa một đoạn chữ")
@@ -40,39 +71,25 @@ class ModerationCommands(AdminCog):
 
         needle = (contains or "").lower()
         filtered = bool(user or bots or needle)
-        channel, started = interaction.channel, time.monotonic()
+
+        def match(m):
+            return ((user is None or m.author.id == user.id) and (not bots or m.author.bot)
+                    and needle in m.content.lower())
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            # The latest `count` matching messages, looking back up to SCAN_LIMIT
-            # messages when a filter skips some; stop as soon as there are enough.
-            picked = []
-            async for m in channel.history(limit=SCAN_LIMIT if filtered else count):
-                if ((user is None or m.author.id == user.id) and (not bots or m.author.bot)
-                        and needle in m.content.lower()):
-                    picked.append(m)
-                    if len(picked) >= count:
-                        break
-            # Bulk delete takes 100 at a time but only messages under 14 days old;
-            # older ones must go one by one (slow, rate-limited).
-            cutoff = discord.utils.utcnow() - timedelta(days=14)
-            recent = [m for m in picked if m.created_at > cutoff]
-            for i in range(0, len(recent), 100):
-                await channel.delete_messages(recent[i:i + 100])
-            for m in picked[len(recent):]:
-                await m.delete()
+            deleted = await delete_latest(
+                interaction.channel, count, match, scan_limit=SCAN_LIMIT if filtered else count,
+                label=f"/purge asked={count} user={getattr(user, 'id', None)} bots={bots} contains={contains!r}",
+            )
         except discord.Forbidden:
             await say(interaction, "Xin thứ lỗi, Mari chưa được cấp quyền để dọn tin nhắn ở đây.")
             return
         except discord.HTTPException as e:
             await say(interaction, f"Đã có trục trặc trong lúc Mari dọn dẹp. Mari xin lỗi. `({e})`")
             return
-        logger.info("Purge | #%s | asked=%s user=%s bots=%s contains=%r | deleted=%s (%s old) | %.1fs",
-                    channel, count, getattr(user, "id", None), bots, contains, len(picked),
-                    len(picked) - len(recent), time.monotonic() - started)
-        which = ((f" của {user.display_name}" if user else "") + (" của bot" if bots else "")
-                 + (f' có chứa "{contains}"' if contains else ""))
-        await say(interaction, f"Xong rồi ạ, Mari đã dọn {len(picked)} tin nhắn{which}.")
+        which = purge_scope(user and user.display_name, bots, contains)
+        await say(interaction, f"Xong rồi ạ, Mari đã dọn {deleted} tin nhắn{which}.")
 
     # -- Ban / Unban ---------------------------------------------------------
     @app_commands.command(name="ban", description="Mời một thành viên rời khỏi server")

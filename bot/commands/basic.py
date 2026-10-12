@@ -170,6 +170,7 @@ class BasicCommands(MariCog):
                 name="Chỉ dành cho Sensei",
                 value=(
                     "`Mari ơi, <điều muốn nói>` (hoặc `Mari à`, `Mari,` ...) — Trò chuyện với Mari (reply vào câu trả lời để nói tiếp)\n"
+                    "`Mari, xóa giúp 10 tin của <tên>` — Nhờ Mari xóa tin trong kênh này (có nút xác nhận)\n"
                     "`/check img <image>` — Đọc chữ trong một hình ảnh\n"
                     "`/text <message> [sticker] [channel]` — Nhờ Mari gửi tin nhắn hoặc sticker"
                 ),
