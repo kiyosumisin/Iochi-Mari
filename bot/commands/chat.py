@@ -28,7 +28,7 @@ _CALL = re.compile(
 HISTORY_TURNS = 12   # messages (Sensei's and Mari's) remembered per channel
 FORGET_AFTER = 1800  # seconds of silence before Mari starts a fresh conversation
 MAX_IMAGES = 3      # pictures per message (the Gemini relay caps a request at 4.5 MB)
-CLEANUP_AFTER = 8   # seconds Mari's "done" answer stays before she deletes it
+CLEANUP_AFTER = 8   # seconds before Sensei's request and Mari's "done" answer are deleted
 
 
 def _purge_request(action) -> dict | None:
@@ -99,7 +99,8 @@ class PurgeConfirm(discord.ui.View):
         except discord.HTTPException as e:
             note = f"Em xin lỗi, đã có trục trặc khi xóa. `({e})`"
         await interaction.edit_original_response(content=f"{interaction.message.content}\n*{note}*"[:2000])
-        if done:  # tidy up after herself; an error stays for Sensei to read
+        if done:  # tidy up: Sensei's request and her answer go; an error stays to be read
+            await self.request.delete(delay=CLEANUP_AFTER)
             await interaction.message.delete(delay=CLEANUP_AFTER)
 
     @discord.ui.button(label="Hủy", style=discord.ButtonStyle.secondary)
