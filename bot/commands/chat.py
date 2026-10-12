@@ -126,22 +126,21 @@ class PurgeConfirm(discord.ui.View):
         def match(m):
             return by_author(m) and (not p["bots"] or m.author.bot) and needle in m.content.lower()
 
-        done = False
         try:
             # Only messages before Sensei's request: never the request or this answer.
             n = await delete_latest(self.request.channel, p["count"], match, scan_limit=SCAN_LIMIT,
                                     before=self.request, label=f"chat {p}")
             note = (f"Xong rồi ạ, em đã xóa {n} tin nhắn{scope}." if n else
                     f"Em đã tìm trong {SCAN_LIMIT} tin gần nhất nhưng không thấy tin nhắn nào{scope} cả ạ.")
-            done = True
+            # Tidy up in the background, after Sensei has read the note; on an error
+            # below both messages stay so the reason can be read.
+            await self.request.delete(delay=CLEANUP_AFTER)
+            await interaction.message.delete(delay=CLEANUP_AFTER)
         except discord.Forbidden:
             note = "Em xin lỗi, em chưa được cấp quyền xóa tin nhắn ở kênh này."
         except discord.HTTPException as e:
             note = f"Em xin lỗi, đã có trục trặc khi xóa. `({e})`"
         await interaction.edit_original_response(content=f"{interaction.message.content}\n*{note}*"[:2000])
-        if done:  # tidy up: Sensei's request and her answer go; an error stays to be read
-            await self.request.delete(delay=CLEANUP_AFTER)
-            await interaction.message.delete(delay=CLEANUP_AFTER)
 
     @discord.ui.button(label="Hủy", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button):

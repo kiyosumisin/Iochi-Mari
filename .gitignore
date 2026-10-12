@@ -13,3 +13,4 @@ ai/data/tranco.zip
 data/feedback_cases.json
 data/image_hashes.json
 ai/feedback.csv
+.serena/
