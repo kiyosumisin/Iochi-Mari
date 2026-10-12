@@ -1,12 +1,20 @@
 """Reporting commands: /stats, /scamlog, /why."""
 
 import csv
-from pathlib import Path
 
 import discord
 from discord import app_commands
 
+from core.retention import CATCH_LOG
 from .common import AdminCog, say
+
+
+def load_catches() -> list[dict]:
+    """Rows of the scam catch log (log/scam_catches.csv), oldest first."""
+    if not CATCH_LOG.exists():
+        return []
+    with CATCH_LOG.open("r", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
 
 class ReportCommands(AdminCog):
@@ -46,17 +54,13 @@ class ReportCommands(AdminCog):
     @app_commands.command(name="scamlog", description="Xem các vụ scam đã bắt (nhật ký bằng chứng)")
     @app_commands.default_permissions(administrator=True)
     async def scamlog(self, interaction: discord.Interaction):
-        # This file lives at bot/commands/reports.py, so the project root is
-        # three levels up.
-        path = Path(__file__).resolve().parents[2] / "log" / "scam_catches.csv"
-        if not path.exists() or path.stat().st_size == 0:
-            await say(interaction, "Mari chưa bắt được vụ scam nào cả. Cầu mong mọi chuyện cứ yên bình như vậy.")
-            return
         try:
-            with path.open("r", newline="", encoding="utf-8") as f:
-                rows = list(csv.DictReader(f))
+            rows = load_catches()
         except Exception as e:
             await say(interaction, f"Mari xin lỗi, Mari không đọc được nhật ký. `({e})`")
+            return
+        if not rows:
+            await say(interaction, "Mari chưa bắt được vụ scam nào cả. Cầu mong mọi chuyện cứ yên bình như vậy.")
             return
 
         total = len(rows)
@@ -74,7 +78,7 @@ class ReportCommands(AdminCog):
                 inline=False,
             )
         embed.set_footer(text=f"Đang hiện {len(recent)} vụ gần nhất trên tổng {total}, nhật ký đầy đủ ở file đính kèm.")
-        await interaction.response.send_message(embed=embed, file=discord.File(str(path)))
+        await interaction.response.send_message(embed=embed, file=discord.File(str(CATCH_LOG)))
 
     # -- Why (Gemini agent) --------------------------------------------------
     @app_commands.command(name="why", description="Hỏi Mari vì sao một người bị đánh dấu hoặc bị xử lý")

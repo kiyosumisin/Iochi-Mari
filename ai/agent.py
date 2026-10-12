@@ -110,8 +110,13 @@ CHAT_SYSTEM = (
     "internet access, no reminders or schedules, and you forget this chat after a while, "
     "so never offer those. "
     "Respond ONLY with a JSON object with exactly two keys: \"reply\" (your message to "
-    "Sensei, written as described above) and \"action\". \"action\" is null, except when "
-    "Sensei clearly asks you to delete messages in this channel: then it is {\"type\": "
+    "Sensei, written as described above) and \"action\". \"action\" is null, except in "
+    "two cases. (1) Sensei asks who was caught or banned for scams, or how many scams you "
+    "caught (today, lately, in the last N days): then it is {\"type\": \"scamlog\", "
+    "\"days\": 0 for today, else the number of recent days (7 if vague, like \"dạo này\"; "
+    "at most 23)} and \"reply\" is \"\", because you will read the real records yourself; "
+    "never guess who was caught. (2) Sensei clearly asks you to delete messages in this "
+    "channel: then it is {\"type\": "
     "\"purge\", \"count\": number of messages (1-1000), \"author\": the username, display "
     "name or <@mention> of whose messages to delete exactly as Sensei wrote it (without a "
     "leading @), or null for anyone, \"bots\": true if only bots' messages, else false, "
@@ -298,7 +303,8 @@ class MariAgent:
             reply, action = out, None  # not JSON after all: take it as plain talk
         # Models sometimes slip into "ngài" despite the prompt; Mari only says Sensei.
         reply = re.sub(r"\b[Nn]gài\b", "Sensei", reply).strip()
-        return (reply, action if isinstance(action, dict) else None) if reply else None
+        action = action if isinstance(action, dict) else None
+        return (reply, action) if reply or action else None
 
     # -- public: translate a message for a country-flag reaction -------------
     async def translate(self, text: str, country_code: str, image: bytes | None = None):

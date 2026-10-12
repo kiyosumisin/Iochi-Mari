@@ -8,13 +8,15 @@ the confirm button under her answer."""
 import re
 import time
 from collections import deque
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord.ext import commands
 
-from bot.voice import is_sensei, to_reader
+from bot.voice import VERDICT_VI, is_sensei, to_reader
 from .common import MariCog
 from .moderation import SCAN_LIMIT, delete_latest, purge_scope
+from .reports import load_catches
 from .translate import message_images, split_text
 
 # Calling Mari at the start of a message: "Mari ơi", "Mari à", "Mari ạ", "Mari này",
@@ -28,7 +30,45 @@ _CALL = re.compile(
 HISTORY_TURNS = 12   # messages (Sensei's and Mari's) remembered per channel
 FORGET_AFTER = 1800  # seconds of silence before Mari starts a fresh conversation
 MAX_IMAGES = 3      # pictures per message (the Gemini relay caps a request at 4.5 MB)
+VN_TIME = timezone(timedelta(hours=7))  # Sensei's "hôm nay" (Vietnam has no DST)
 CLEANUP_AFTER = 8   # seconds before Sensei's request and Mari's "done" answer are deleted
+
+
+def _catch_reason(row: dict) -> str:
+    kind, _, verdict = (row.get("category") or "").partition(":")
+    detail = (row.get("detail") or "")[:80]
+    if kind in ("url", "link"):
+        return f"liên kết {VERDICT_VI.get(verdict, 'scam')} `{detail}`"
+    if kind == "image":
+        return "ảnh scam đã biết" if verdict == "known" else "ảnh scam"
+    if kind == "spread":
+        return f"rải tin hàng loạt (`{detail}`)"
+    return f"`{row.get('category')}`"
+
+
+def catches_report(guild_name: str, days: int) -> str:
+    """Who Mari caught in this server today (days=0) or in the last `days` days,
+    read from the real catch log, never from the model's imagination."""
+    now = datetime.now(VN_TIME)
+    since = now.replace(hour=0, minute=0, second=0, microsecond=0) if days == 0 else now - timedelta(days=days)
+    caught = []
+    for row in load_catches():
+        try:
+            ts = datetime.strptime(row["timestamp_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except (KeyError, ValueError):
+            continue
+        if row.get("server") == guild_name and ts >= since:
+            caught.append((ts.astimezone(VN_TIME), row))
+    when = "Hôm nay" if days == 0 else f"Trong {days} ngày qua"
+    if not caught:
+        return f"{when} chưa có ai bị bắt vì scam cả ạ. Cầu mong mọi chuyện cứ bình yên như vậy."
+    lines = [f"{when} em đã bắt **{len(caught)}** vụ scam ạ:"]
+    for ts, row in caught[-10:][::-1]:
+        lines.append(f"- {ts.strftime('%H:%M' if days == 0 else '%d/%m %H:%M')} · **{row.get('user', '?')}** · "
+                     f"#{row.get('channel', '?')} · {_catch_reason(row)}")
+    if len(caught) > 10:
+        lines.append(f"…và {len(caught) - 10} vụ cũ hơn nữa, Sensei xem đủ bằng `/scamlog` nhé.")
+    return "\n".join(lines)
 
 
 def _purge_request(action) -> dict | None:
@@ -175,6 +215,13 @@ class ChatCog(MariCog):
                                        "Sensei thử lại sau một chút nhé.")
             return
         reply, action = answer
+        if (action or {}).get("type") == "scamlog":
+            try:
+                days = min(max(int(action.get("days") or 0), 0), 23)  # the log keeps 23 days
+                reply = (catches_report(message.guild.name, days) if message.guild else
+                         "Sensei hỏi em trong server nhé, em chỉ xem được nhật ký của từng server thôi ạ.")
+            except (ValueError, OSError) as e:
+                reply = f"Em xin lỗi, em chưa đọc được nhật ký bắt scam. `({e})`"
         purge = _purge_request(action)
         # Pictures are not kept: later turns only know that one was shown.
         seen = f" [kèm {len(images)} ảnh]" if images else ""

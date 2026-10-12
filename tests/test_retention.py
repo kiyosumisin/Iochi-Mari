@@ -58,6 +58,33 @@ def test_old_records_are_purged_and_new_ones_kept():
         assert rt.purge_all(gs, store) == {"agent_calls": 0, "scam_catches": 0, "violations": 0, "review_cases": 0}
 
 
+def test_mari_reports_only_real_catches_of_this_server():
+    import bot.commands.reports as reports
+    from bot.commands.chat import VN_TIME, catches_report
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reports.CATCH_LOG = Path(tmp) / "scam_catches.csv"
+        local_midnight = NOW.astimezone(VN_TIME).replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = [  # (time, server, user, category, detail)
+            (local_midnight + timedelta(minutes=5), "Otakus", "today_scammer", "link:phishing", "d-giftnitro.com"),
+            (local_midnight - timedelta(minutes=5), "Otakus", "yesterday_bot", "spread", "20 kênh trong 120 giây"),
+            (local_midnight + timedelta(minutes=9), "Other", "elsewhere", "image:gemini", "x.png"),
+        ]
+        with reports.CATCH_LOG.open("w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp_utc", "server", "channel", "user", "user_id", "category", "detail", "action"])
+            for when, server, user, cat, detail in rows:
+                w.writerow([when.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), server, "general",
+                            user, 1, cat, detail, "banned"])
+
+        today = catches_report("Otakus", 0)
+        assert "**1**" in today and "today_scammer" in today and "yesterday_bot" not in today, today
+        assert "elsewhere" not in today
+        week = catches_report("Otakus", 7)
+        assert "**2**" in week and "yesterday_bot" in week, week
+        assert "chưa có ai" in catches_report("Nobody", 7)
+
+
 if __name__ == "__main__":
     tests = [f for name, f in dict(globals()).items() if name.startswith("test_")]
     for t in tests:
