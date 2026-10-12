@@ -131,7 +131,7 @@ class BasicCommands(MariCog):
             value=(
                 "`/check link <url>` — Mari xem giúp một liên kết (chỉ mình bạn thấy kết quả)\n"
                 "Thả cờ một quốc gia vào tin nhắn — Mari dịch tin đó sang ngôn ngữ của nước ấy\n"
-                "`Mari ơi` — Gọi xem Mari có ở đây không"
+                "`Mari ơi` / `Mari à` / `Mari` — Gọi xem Mari có ở đây không"
             ),
             inline=False,
         )
@@ -169,7 +169,7 @@ class BasicCommands(MariCog):
             embed.add_field(
                 name="Chỉ dành cho Sensei",
                 value=(
-                    "`Mari ơi, <điều muốn nói>` — Trò chuyện với Mari (reply vào câu trả lời để nói tiếp)\n"
+                    "`Mari ơi, <điều muốn nói>` (hoặc `Mari à`, `Mari,` ...) — Trò chuyện với Mari (reply vào câu trả lời để nói tiếp)\n"
                     "`/check img <image>` — Đọc chữ trong một hình ảnh\n"
                     "`/text <message> [sticker] [channel]` — Nhờ Mari gửi tin nhắn hoặc sticker"
                 ),

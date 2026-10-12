@@ -196,7 +196,7 @@ multiple servers.
 |---|---|
 | `/check <url>` | Inspect a link (result is private to you) |
 | `/help` | List available commands |
-| `Mari ơi` (a message starting with it) | Mari answers, so you know she is there |
+| `Mari ơi` / `Mari à` / `Mari,` / `Mari` (at the start of a message) | Mari answers, so you know she is there; the owner can chat with her this way |
 
 ### Admin only (require **Administrator**; hidden from other members)
 

@@ -23,6 +23,14 @@ def test_code_and_other_readers_are_left_alone():
     assert to_reader("bạnbè", True) == "bạnbè"
 
 
+def test_calling_mari_versus_talking_about_her():
+    from bot.commands.chat import _CALL
+    for call in ["Mari ơi", "Mari à, giúp anh", "Mari ạ", "Mari nè", "Mari", "Mari!", "Mari, hình này là gì", "ê Mari ơi"]:
+        assert _CALL.match(call), call
+    for talk in ["Mari bắt scam giỏi ghê", "Marina", "Mari an toàn không", "hello Mari ơi"]:
+        assert not _CALL.match(talk), talk
+
+
 if __name__ == "__main__":
     tests = [f for name, f in dict(globals()).items() if name.startswith("test_")]
     for t in tests:

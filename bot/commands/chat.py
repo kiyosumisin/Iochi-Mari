@@ -14,8 +14,14 @@ from bot.voice import is_sensei, to_reader
 from .common import MariCog
 from .translate import message_images, split_text
 
-# "Mari ơi", "mari oi", "Mari ơiii!" ... at the start of a message.
-_CALL = re.compile(r"\s*mari\s+[oơ]i+\b[\s,.!?…:]*", re.IGNORECASE)
+# Calling Mari at the start of a message: "Mari ơi", "Mari à", "Mari ạ", "Mari này",
+# "Mari nè", "Mari ới", "Mari, ...", "Mari!" or just "Mari", optionally after
+# "này" / "ê" / "hey" / "chào". "Mari bắt scam giỏi ghê" only talks about her.
+_CALL = re.compile(
+    r"\s*(?:(?:này|nè|ê|hey|hi|chào)\s+)?mari"
+    r"(?:\s+(?:[oơ]i+|ới|[aàạ]|này|nay|nè|ne)\b|(?=\s*(?:[,.!?…:]|$)))[\s,.!?…:]*",
+    re.IGNORECASE,
+)
 HISTORY_TURNS = 12   # messages (Sensei's and Mari's) remembered per channel
 FORGET_AFTER = 1800  # seconds of silence before Mari starts a fresh conversation
 MAX_IMAGES = 3      # pictures per message (the Gemini relay caps a request at 4.5 MB)
