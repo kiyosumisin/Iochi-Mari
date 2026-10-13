@@ -720,22 +720,18 @@ class MessageHandler:
                                      evidence=evidence, headline=headline)
             return True
 
-        try:
-            await message.delete()
-        except (discord.NotFound, discord.Forbidden):
-            logger.warning("Could not delete known scam %s from %s", kind, author)
         limit = self.honeypot_warn_limit
         count = self._bump_warn(f"ks:{author.id}")
         if count > limit:
             await self._honeypot_ban(message, reason=f"Vẫn đăng scam đã biết sau {limit} lần nhắc",
-                                     already_deleted=True, catch=(f"{kind}:known", detail),
+                                     catch=(f"{kind}:known", detail),
                                      evidence=evidence, headline=headline)
             return True
 
-        # Already deleted above. "Bỏ qua" here means "this member meant well", not
-        # "this scam is safe", so the case carries no evidence to learn from.
+        # "Bỏ qua" here means "this member meant well", not "this scam is safe",
+        # so the case carries no evidence to learn from.
         await self._ask_sensei(
-            message, kind=kind, verdict=f"known scam {kind}", strong=True, deleted=True,
+            message, kind=kind, verdict=f"known scam {kind}", strong=True,
             reason=f"{KIND_VI[kind]} scam đã biết", url=evidence.get("url"), learn=False,
             aside=(f"\nBạn {author.mention} ơi, nếu bạn chỉ muốn cảnh báo mọi người thì cảm ơn bạn "
                    f"nhiều nhé, lần sau bạn kể bằng lời thôi là được ạ (lần nhắc {count}/{limit})."),
@@ -744,7 +740,7 @@ class MessageHandler:
 
     async def _ask_sensei(self, message, *, kind: str, verdict: str, reason: str, strong: bool,
                           url: str | None = None, image_hash: int | None = None, learn: bool = True,
-                          deleted: bool = False, aside: str = ""):
+                          aside: str = ""):
         """Outside the honeypot Mari never bans on her own. A strong suspicion:
         hide the post and ask Sensei right in that channel, with Ban / Bỏ qua (the
         ping at most every PING_EVERY seconds). A weak one: leave the post and only
@@ -763,11 +759,10 @@ class MessageHandler:
                 view=view,
             )
             return
-        if not deleted:
-            try:
-                await message.delete()
-            except (discord.NotFound, discord.Forbidden):
-                logger.warning("Could not hide suspicious %s from %s", kind, author)
+        try:
+            await message.delete()
+        except (discord.NotFound, discord.Forbidden):
+            logger.warning("Could not hide suspicious %s from %s", kind, author)
         self._stat(guild, "links_blocked")
         owner = int(getattr(self.config, "OWNER_ID", 0) or 0)
         ping = bool(owner) and time.time() - self._last_ping >= PING_EVERY
