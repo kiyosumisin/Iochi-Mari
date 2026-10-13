@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 # plus SPAM_CHANNELS-1 other channels within SPAM_WINDOW_S seconds is a ban.
 SPAM_WINDOW_S = 120
 SPAM_CHANNELS = 3
+# Outside the honeypot Mari never bans on a guess: she asks Sensei, pinging at
+# most once per this many seconds.
+PING_EVERY = 600
 # Gemini must be at least this sure an honeypot image is a scam to ban on it.
 SCAM_IMAGE_CONFIDENCE = 0.8
 
@@ -113,6 +116,7 @@ class MessageHandler:
         self.honeypot_warn_limit = config.HONEYPOT_WARN_LIMIT
         self._media_posts: dict[int, deque] = {}  # user id -> (time, channel id) of media/link posts
         self._banned_recently: dict[int, float] = {}  # user id -> ban time, one ban per burst
+        self._last_ping = 0.0  # last time Mari pinged Sensei about a suspicious post
 
     def _note_media_post(self, message) -> set[int]:
         """Record a media/link post and return the channels this author posted
@@ -728,31 +732,105 @@ class MessageHandler:
                                      evidence=evidence, headline=headline)
             return True
 
-        self._stat(guild, "links_blocked")
-        try:
-            await channel.send(
-                f"{author.mention}, Mari đã gỡ tin nhắn của bạn vì nó có một {KIND_VI[kind]} đã được biết là scam. "
-                f"Nếu bạn đăng để cảnh báo mọi người thì Mari thật lòng cảm ơn bạn; lần sau bạn chỉ cần "
-                f"kể lại bằng lời, đừng đăng lại nó nhé. Đây là lần nhắc {count}/{limit}.",
-                delete_after=20,
-            )
-        except discord.Forbidden:
-            logger.warning("Cannot post known-scam notice in %s", channel)
-        # No evidence on this case: "Dismiss" means "this member meant well",
-        # not "this scam is safe", so it must not teach Mari anything.
-        link = f"\nLiên kết: `{evidence['url']}`" if "url" in evidence else ""
-        await self._notify(
-            guild, channel,
-            f"{headline}\nMari đã gỡ nó và nhẹ nhàng nhắc nhở ({count}/{limit}), vì có thể bạn ấy chỉ "
-            f"đang cảnh báo mọi người.{link}\nNếu bạn ấy có ý xấu, mod có thể ban bằng nút bên dưới.",
-            view=self._case_view(message, review=True, verdict=f"known scam {kind}"),
+        # Already deleted above. "Bỏ qua" here means "this member meant well", not
+        # "this scam is safe", so the case carries no evidence to learn from.
+        await self._ask_sensei(
+            message, kind=kind, verdict=f"known scam {kind}", strong=True, deleted=True,
+            reason=f"{KIND_VI[kind]} scam đã biết", url=evidence.get("url"), learn=False,
+            aside=(f"\nBạn {author.mention} ơi, nếu bạn chỉ muốn cảnh báo mọi người thì cảm ơn bạn "
+                   f"nhiều nhé, lần sau bạn kể bằng lời thôi là được ạ (lần nhắc {count}/{limit})."),
         )
         return True
 
+    async def _ask_sensei(self, message, *, kind: str, verdict: str, reason: str, strong: bool,
+                          url: str | None = None, image_hash: int | None = None, learn: bool = True,
+                          deleted: bool = False, aside: str = ""):
+        """Outside the honeypot Mari never bans on her own. A strong suspicion:
+        hide the post and ask Sensei right in that channel, with Ban / Bỏ qua (the
+        ping at most every PING_EVERY seconds). A weak one: leave the post and only
+        note it in the log channel, without a ping. With learn=False a "Bỏ qua"
+        teaches Mari nothing (the item itself is a known scam)."""
+        guild, channel, author = message.guild, message.channel, message.author
+        view = (self._case_view(message, review=True, verdict=verdict, url=url, image_hash=image_hash)
+                if learn else self._case_view(message, review=True, verdict=verdict))
+        link = f"\nLiên kết: `{url}`" if url else ""
+        if not strong:
+            await self._notify(
+                guild, channel,
+                f"**Mari hơi nghi một {KIND_VI[kind]}** của **{author}** ở "
+                f"#{getattr(channel, 'name', '?')} ({reason}).{link}\n"
+                f"Mari để yên tin nhắn, mod xem giúp khi rảnh nhé.",
+                view=view,
+            )
+            return
+        if not deleted:
+            try:
+                await message.delete()
+            except (discord.NotFound, discord.Forbidden):
+                logger.warning("Could not hide suspicious %s from %s", kind, author)
+        self._stat(guild, "links_blocked")
+        owner = int(getattr(self.config, "OWNER_ID", 0) or 0)
+        ping = bool(owner) and time.time() - self._last_ping >= PING_EVERY
+        if ping:
+            self._last_ping = time.time()
+        text = (f"{f'<@{owner}> ' if owner else ''}Sensei ơi, em vừa tạm giấu một {KIND_VI[kind]} rất đáng ngờ "
+                f"của **{author}** ({reason}).{link}\n"
+                f"Sensei xem giúp em: bấm **Ban** nếu là scam, **Bỏ qua** nếu không sao ạ.{aside}")
+        mentioned = [discord.Object(owner)] if ping else []
+        if aside:
+            mentioned.append(author)
+        try:
+            await channel.send(text, view=view, allowed_mentions=discord.AllowedMentions(
+                users=mentioned, everyone=False, roles=False))
+        except discord.HTTPException:
+            await self._notify(guild, channel, text, view=view)  # no right to speak here: log it instead
+
+    async def _watch(self, message):
+        """Honeypot mode, any other channel: check links and image text, and ask
+        Sensei about anything suspicious (see _ask_sensei). Never bans."""
+        if not message.guild or self._is_admin(message.author):
+            return
+        trusted = self.guild_settings.get_whitelist(message.guild.id) if self.guild_settings else set()
+        for url in URLUtils.extract_urls(message.content or ""):
+            if URLUtils.domain_in(URLUtils.get_domain(url), trusted):
+                continue
+            detail = await self.evaluator.evaluate_detailed(url)
+            verdict = detail["verdict"]
+            self._stat(message.guild, "urls_scanned")
+            if verdict in ("safe", "none"):
+                continue
+            p = detail.get("probability")
+            external = any(s in ("scanner:malware", "scanner:phishing") for s in detail.get("sources") or [])
+            reason = ("Google/VirusTotal báo trang này nguy hiểm" if external else
+                      f"Mari đoán là {VERDICT_VI.get(verdict, verdict)}"
+                      + (f", chắc khoảng {p:.0%}" if p is not None else ""))
+            await self._ask_sensei(message, kind="link", verdict=verdict, url=url, reason=reason,
+                                   strong=external or (p is not None and p >= self.config.AI_OVERRIDE_THRESHOLD))
+            return
+        if not self.config.OCR_ENABLED:
+            return
+        for att in message.attachments:
+            if not self._is_image_attachment(att):
+                continue
+            try:
+                data = await att.read()
+                text = await asyncio.to_thread(ocr_image_bytes, data)
+            except Exception as exc:
+                logger.warning("Watch OCR failed | %s | %s", att.filename, exc)
+                continue
+            found = scan_ocr_text(text) if text and text.strip() else None
+            if found:  # "scam" = 2+ scam phrases, "suspected" = just one
+                await self._ask_sensei(
+                    message, kind="image", verdict=f"image:{found}",
+                    image_hash=await asyncio.to_thread(_fingerprint, data), strong=found == "scam",
+                    reason="ảnh có nhiều cụm chữ hay gặp ở scam" if found == "scam" else "ảnh có chữ hơi giống scam",
+                )
+                return
+
     async def _route_honeypot_mode(self, message, honeypot_id: int, spread: set):
-        """Honeypot mode: the bot ONLY moderates the honeypot channel, so an
-        over-eager verdict can never cause a wrongful ban elsewhere — except for
-        a spam burst that also hit the honeypot (and known scams, handled earlier)."""
+        """Honeypot mode: Mari bans only in the honeypot (and for a spam burst that
+        also hit it). Every other channel is watched, but there she only hides
+        and asks Sensei (_watch), so an over-eager verdict never bans anyone."""
         if message.channel.id == honeypot_id:
             await self._handle_honeypot(message, spread)
         elif (honeypot_id in spread and len(spread) >= SPAM_CHANNELS
@@ -764,6 +842,8 @@ class MessageHandler:
                 reason=f"Honeypot: cùng một bài rải ra {len(spread)} kênh",
                 catch=("spread", f"{len(spread)} kênh trong {SPAM_WINDOW_S} giây"),
             )
+        else:
+            await self._watch(message)
 
     async def _check_url(self, message, url: str, guild, threshold) -> bool:
         """Evaluate one link and act on it. Returns True if the message was removed."""

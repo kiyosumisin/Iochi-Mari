@@ -58,9 +58,16 @@ class World:
             get_whitelist=lambda g: set(whitelist), increment_stat=lambda *a, **k: None,
             record_violation=lambda *a, **k: None,
         )
-        evaluator = T.SimpleNamespace(is_known_scam=lambda d: d == "d-giftnitro.com")
+        self.verdicts = {}  # url -> evaluate_detailed() answer for the watch mode; default safe
+
+        async def evaluate_detailed(url, threshold=None):
+            return self.verdicts.get(url, {"verdict": "safe", "probability": 0.01, "sources": []})
+
+        evaluator = T.SimpleNamespace(is_known_scam=lambda d: d == "d-giftnitro.com",
+                                      evaluate_detailed=evaluate_detailed)
         cfg = T.SimpleNamespace(TIMEOUT_DURATIONS=["10m"], HONEYPOT_WARN_LIMIT=3, OCR_ENABLED=False,
-                                HONEYPOT_CHANNEL_ID=0, LOG_CHANNEL_ID=0)
+                                HONEYPOT_CHANNEL_ID=0, LOG_CHANNEL_ID=0, AI_OVERRIDE_THRESHOLD=0.9,
+                                OWNER_ID=1)
         self.handler = MessageHandler(evaluator, cfg, gs, None, self.feedback)
         self.handler.warn_file = tmp / "warnings.json"
         self.handler.warns = {}
@@ -73,7 +80,8 @@ class World:
             id, name = channel_id, f"ch{channel_id}"
 
             async def send(self, text, view=None, **kw):
-                log.append(("send", text, view))
+                pinged = [u.id for u in getattr(kw.get("allowed_mentions"), "users", None) or []]
+                log.append(("send", text, view, pinged))
 
         class Att:
             filename, content_type, size = "a.png", "image/png", len(IMG)
@@ -131,6 +139,37 @@ def test_repeat_offender_is_banned_after_the_warning_limit():
         w.handler._media_posts.clear()  # separate posts, not one burst
         w.post(GENERAL, SCAM)
     assert w.kinds().count("ban") == 1 and w.log[-1][0] == "send"
+
+
+def test_strong_suspicion_is_hidden_and_sensei_asked_in_that_channel():
+    w = World()
+    w.verdicts["https://evil.example/login"] = {"verdict": "phishing", "probability": 0.4,
+                                                "sources": ["scanner:phishing"]}
+    w.post(GENERAL, "https://evil.example/login")
+    sends = [e for e in w.log if e[0] == "send"]
+    assert "ban" not in w.kinds() and "delete" in w.kinds(), w.log
+    assert len(sends) == 1 and sends[0][3] == [1] and "Sensei ơi" in sends[0][1]
+    assert [c.item.label for c in sends[0][2].children] == ["Ban", "Bỏ qua"]
+    case = next(iter(w.feedback.cases.values()))
+    assert case["url"] == "https://evil.example/login"  # "Bỏ qua" teaches Mari this link is fine
+
+
+def test_weak_suspicion_leaves_the_post_and_pings_no_one():
+    w = World()
+    w.verdicts["https://odd.example/"] = {"verdict": "phishing", "probability": 0.6, "sources": ["ai:phishing:0.6"]}
+    w.post(GENERAL, "https://odd.example/")
+    sends = [e for e in w.log if e[0] == "send"]
+    assert "delete" not in w.kinds() and "ban" not in w.kinds()
+    assert len(sends) == 1 and "hơi nghi" in sends[0][1] and sends[0][3] == []
+
+
+def test_sensei_is_pinged_at_most_every_ten_minutes():
+    w = World()
+    for n in (1, 2):
+        w.verdicts[f"https://evil{n}.example/"] = {"verdict": "malware", "probability": 0.95, "sources": []}
+        w.post(GENERAL, f"https://evil{n}.example/", user=40 + n)
+    pings = [e[3] for e in w.log if e[0] == "send"]
+    assert pings == [[1], []], pings
 
 
 def test_unlisted_links_admins_and_trusted_domains_are_left_alone():
