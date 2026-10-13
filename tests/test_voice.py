@@ -31,6 +31,24 @@ def test_calling_mari_versus_talking_about_her():
         assert not _CALL.match(talk), talk
 
 
+def test_deleting_our_chat_spares_everyone_else():
+    import types as T
+    from bot.commands.chat import _our_chat
+    SENSEI, MARI, FRIEND = 1, 999, 42
+    msgs = {}
+
+    def m(i, who, text, reply_to=None):
+        ref = T.SimpleNamespace(resolved=msgs[reply_to]) if reply_to else None
+        msgs[i] = T.SimpleNamespace(id=i, author=T.SimpleNamespace(id=who), content=text, reference=ref)
+
+    for args in [(1, SENSEI, "Mari ơi, hôm nay thế nào?"), (2, MARI, "Dạ em ổn ạ", 1), (3, FRIEND, "đi ăn không"),
+                 (4, SENSEI, "đi luôn"), (5, FRIEND, "Mari ơi"), (6, MARI, "Vâng, Mari đây ạ", 5),
+                 (7, SENSEI, "kể tiếp đi em", 2), (8, MARI, "Dạ...", 7)]:
+        m(*args)
+    match = _our_chat(T.SimpleNamespace(user=T.SimpleNamespace(id=MARI)), SENSEI)
+    assert [i for i, x in msgs.items() if match(x)] == [1, 2, 7, 8]
+
+
 if __name__ == "__main__":
     tests = [f for name, f in dict(globals()).items() if name.startswith("test_")]
     for t in tests:

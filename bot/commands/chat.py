@@ -89,7 +89,8 @@ def _purge_request(action) -> dict | None:
     return {"count": count,
             "author": str(action.get("author") or "").strip().lstrip("@") or None,
             "bots": bool(action.get("bots")),
-            "contains": str(action.get("contains") or "").strip() or None}
+            "contains": str(action.get("contains") or "").strip() or None,
+            "chat": bool(action.get("chat"))}
 
 
 def _by_author(author: str | None):
@@ -142,7 +143,21 @@ async def _find_banned(guild: discord.Guild, who: str):
     return None, f"Em không thấy ai tên **{who}** trong danh sách bị ban ạ."
 
 
-async def _plan(bot, request: discord.Message, action: dict):
+def _our_chat(bot, sensei_id: int):
+    """Match the messages of Sensei's conversation with Mari: Sensei calling Mari
+    or replying to her, and Mari's replies to Sensei. Nobody else's."""
+    def match(m):
+        ref = m.reference.resolved if m.reference else None
+        to = getattr(getattr(ref, "author", None), "id", None)
+        if m.author.id == bot.user.id:
+            return to == sensei_id
+        if m.author.id == sensei_id:
+            return bool(_CALL.match(m.content or "")) or to == bot.user.id
+        return False
+    return match
+
+
+async def _plan(bot, request: discord.Message, action: dict, forget=None):
     """Get a requested action ready for Sensei to confirm: (what Mari will do,
     async do() -> note, tidy up afterwards?), or (why she can't, None, False).
     Only Sensei ever reaches this, and nothing runs before the button."""
@@ -153,17 +168,23 @@ async def _plan(bot, request: discord.Message, action: dict):
             return "Sensei cho em biết cần xóa bao nhiêu tin giúp em nhé.", None, False
         needle, by_author = (p["contains"] or "").lower(), _by_author(p["author"])
         scope = purge_scope(p["author"], p["bots"], p["contains"])
-
-        def match(m):
-            return by_author(m) and (not p["bots"] or m.author.bot) and needle in m.content.lower()
+        if p["chat"]:
+            scope, match = " giữa Sensei và em", _our_chat(bot, request.author.id)
+        else:
+            def match(m):
+                return by_author(m) and (not p["bots"] or m.author.bot) and needle in m.content.lower()
 
         async def purge():
             # Only messages before Sensei's request: never the request or this answer.
             n = await delete_latest(request.channel, p["count"], match, scan_limit=SCAN_LIMIT,
                                     before=request, label=f"chat {p}")
+            if p["chat"] and forget:
+                forget()  # "xóa lịch sử": Mari forgets the conversation too
             return (f"Xong rồi ạ, em đã xóa {n} tin nhắn{scope}." if n else
                     f"Em đã tìm trong {SCAN_LIMIT} tin gần nhất nhưng không thấy tin nhắn nào{scope} cả ạ.")
-        return f"> Xóa {p['count']} tin nhắn{scope} trong kênh này", purge, True
+        what = (f"> Xóa cuộc trò chuyện giữa Sensei và em (tối đa {p['count']} tin gần nhất), tin của người khác giữ nguyên"
+                if p["chat"] else f"> Xóa {p['count']} tin nhắn{scope} trong kênh này")
+        return what, purge, True
 
     if kind not in ("ban", "unban", "timeout"):
         return None, None, False
@@ -331,7 +352,8 @@ class ChatCog(MariCog):
                 reply = f"Em xin lỗi, em chưa đọc được nhật ký bắt scam. `({e})`"
         what = do = None
         if action and action.get("type") != "scamlog":
-            what, do, cleanup = await _plan(self.bot, message, action)
+            what, do, cleanup = await _plan(self.bot, message, action,
+                                            forget=lambda: self._history.pop(cid, None))
             if what:  # show exactly what will happen, or why it can't
                 reply = f"{reply}\n{what}" if do else what
         # Pictures are not kept: later turns only know that one was shown.
