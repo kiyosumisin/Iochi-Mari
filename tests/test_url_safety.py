@@ -72,6 +72,16 @@ def test_ocr_keywords_are_whole_words():
     assert scan_ocr_text("FREE NITRO giveaway - claim now!") == "scam"
 
 
+def test_popular_sites_trusted_but_not_pages_anyone_can_publish():
+    from core.popular import PopularDomains
+    pop = PopularDomains()
+    pop.domains = {"hdslb.com", "klipy.com", "fxtwitter.com", "pages.dev", "google.com", "docs.google.com"}
+    for host in ("i0.hdslb.com", "klipy.com", "gif.fxtwitter.com"):
+        assert pop.contains(host), host
+    for host in ("evil-nitro.pages.dev", "docs.google.com", "ghosts-wallets.xyz", "hdslb.com.evil.ru"):
+        assert not pop.contains(host), host
+
+
 if __name__ == "__main__":
     tests = [f for name, f in dict(globals()).items() if name.startswith("test_")]
     for t in tests:

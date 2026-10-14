@@ -70,11 +70,16 @@ class MariBot(commands.Bot):
 
     @tasks.loop(hours=12)
     async def refresh_scam_list(self):
-        """Pull the community Discord scam-domain lists (first run at startup)."""
+        """Pull the community Discord scam-domain lists, and the monthly popular-site
+        list (first run at startup)."""
         try:
             await self.evaluator.scam_list.refresh()
         except Exception:
             logger.exception("Scam list refresh failed")
+        try:
+            await self.evaluator.popular.refresh()
+        except Exception:
+            logger.exception("Popular list refresh failed")
 
     @tasks.loop(hours=24)
     async def purge_old_data(self):

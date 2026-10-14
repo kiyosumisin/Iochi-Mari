@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from core.heuristic_scanner import HeuristicScanner
 from core.content_scanner import ContentScanner
+from core.popular import PopularDomains
 from core.scam_list import ScamDomainList
 from core.url_utils import URLUtils, SHORTENER_DOMAINS
 from ai.predict import predict_url
@@ -23,6 +24,8 @@ class URLEvaluator:
         self.blacklist = self._load_list("blacklist.json")
         # Known Discord scam domains; refreshed in the background by MariBot.
         self.scam_list = ScamDomainList(protected_extra=self.whitelist)
+        # Well-known sites: the model's guess is ignored there (see core/popular.py).
+        self.popular = PopularDomains()
 
     def _load_list(self, filename: str):
         try:
@@ -114,6 +117,13 @@ class URLEvaluator:
         if self.scam_list.contains(domain):
             logger.info("URL on community scam list | url=%s | domain=%s", url, domain)
             return self._cache_detail(cache_key, now, "phishing", 1.0, True, [], ["scamlist"])
+
+        if self.popular.contains(domain):
+            # A well-known site: only Google Safe Browsing can still flag it.
+            v = await self.scanners.google_safe_browsing(url)
+            logger.info("URL on a popular site | url=%s | domain=%s | safe_browsing=%s", url, domain, v)
+            return self._cache_detail(cache_key, now, v or "safe", None, bool(v), [],
+                                      ["popular"] + ([f"scanner:{v}"] if v else []))
 
         heur = HeuristicScanner.scan(url)
         if heur:
