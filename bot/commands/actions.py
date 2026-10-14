@@ -209,8 +209,6 @@ def _find_channel(guild: discord.Guild, ref: str, here):
 
 def _purge_request(action) -> dict | None:
     """The deletion Gemini says Sensei asked for, checked, or None."""
-    if not isinstance(action, dict) or action.get("type") != "purge":
-        return None
     try:
         count = int(action.get("count"))
     except (TypeError, ValueError):
@@ -225,13 +223,12 @@ def _purge_request(action) -> dict | None:
 
 
 def _by_author(author: str | None):
-    """Match a message's author by <@id>, or by username / display name / global name."""
+    """Match a message's author by <@id> or ID, or by username / display name / global name."""
     if author is None:
         return lambda m: True
-    mention = re.fullmatch(r"<@!?(\d+)>", author)
-    if mention:
-        uid = int(mention.group(1))
-        return lambda m: m.author.id == uid
+    if m := _ID.fullmatch(author):
+        uid = int(m.group(1) or m.group(2))
+        return lambda msg: msg.author.id == uid
     name = author.lower()
     return lambda m: name in {(m.author.name or "").lower(), (m.author.display_name or "").lower(),
                               (getattr(m.author, "global_name", None) or "").lower()}
