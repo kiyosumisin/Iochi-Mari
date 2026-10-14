@@ -9,6 +9,15 @@ VERDICT_VI = {"phishing": "lừa đảo đánh cắp tài khoản", "malware": "
 KIND_VI = {"link": "liên kết", "image": "hình ảnh"}
 SUSPICION_VI = {"low": "thấp", "medium": "trung bình", "high": "cao"}
 
+# Calling Mari at the start of a message: "Mari ơi", "Mari à", "Mari ạ", "Mari này",
+# "Mari nè", "Mari ới", "Mari, ...", "Mari!" or just "Mari", optionally after
+# "này" / "ê" / "hey" / "chào". "Mari bắt scam giỏi ghê" only talks about her.
+CALL = re.compile(
+    r"\s*(?:(?:này|nè|ê|hey|hi|chào)\s+)?mari"
+    r"(?:\s+(?:[oơ]i+|ới|[aàạ]|này|nay|nè|ne)\b|(?=\s*(?:[,.!?…:]|$)))[\s,.!?…:]*",
+    re.IGNORECASE,
+)
+
 _YOU = re.compile(r"\b[Bb]ạn\b")
 _SELF_START = re.compile(r"(^|[.!?]\s+|\n\s*)Mari\b")  # "Mari" opening a sentence
 _SELF = re.compile(r"\bMari\b")

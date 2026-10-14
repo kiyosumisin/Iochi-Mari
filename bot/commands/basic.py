@@ -170,9 +170,7 @@ class BasicCommands(MariCog):
                 name="Chỉ dành cho Sensei",
                 value=(
                     "`Mari ơi, <điều muốn nói>` (hoặc `Mari à`, `Mari,` ...) — Trò chuyện với Mari (reply vào câu trả lời để nói tiếp)\n"
-                    "`Mari, xóa giúp 10 tin của <tên>` — Nhờ Mari xóa tin trong kênh này (có nút xác nhận)\n"
-                    "`Mari, ban / gỡ ban / timeout 10 phút <tên>` — Nhờ Mari xử lý một người (có nút xác nhận)\n"
-                    "`Mari, hôm nay có ai bị bắt vì scam không?` — Mari xem nhật ký bắt scam (hôm nay, dạo này, N ngày qua)\n"
+                    "`Mari, <việc cần làm>` — Nhờ Mari bằng lời gần như mọi lệnh `/`: xóa tin, ban, timeout, đặt kênh, tên miền tin cậy, độ nhạy, gửi tin nhắn; xem thống kê, cài đặt, lịch sử, ai bị bắt vì scam, kiểm tra link (việc thay đổi đều có nút xác nhận)\n"
                     "`/check img <image>` — Đọc chữ trong một hình ảnh\n"
                     "`/text <message> [sticker] [channel]` — Nhờ Mari gửi tin nhắn hoặc sticker"
                 ),

@@ -24,7 +24,7 @@ def test_code_and_other_readers_are_left_alone():
 
 
 def test_calling_mari_versus_talking_about_her():
-    from bot.commands.chat import _CALL
+    from bot.voice import CALL as _CALL
     for call in ["Mari ơi", "Mari à, giúp anh", "Mari ạ", "Mari nè", "Mari", "Mari!", "Mari, hình này là gì", "ê Mari ơi"]:
         assert _CALL.match(call), call
     for talk in ["Mari bắt scam giỏi ghê", "Marina", "Mari an toàn không", "hello Mari ơi"]:
@@ -33,7 +33,7 @@ def test_calling_mari_versus_talking_about_her():
 
 def test_deleting_our_chat_spares_everyone_else():
     import types as T
-    from bot.commands.chat import _our_chat
+    from bot.commands.actions import _our_chat
     SENSEI, MARI, FRIEND = 1, 999, 42
     msgs = {}
 

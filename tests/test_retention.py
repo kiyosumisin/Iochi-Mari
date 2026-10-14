@@ -60,7 +60,7 @@ def test_old_records_are_purged_and_new_ones_kept():
 
 def test_mari_reports_only_real_catches_of_this_server():
     import bot.commands.reports as reports
-    from bot.commands.chat import VN_TIME, catches_report
+    from bot.commands.actions import VN_TIME, catches_report
 
     with tempfile.TemporaryDirectory() as tmp:
         reports.CATCH_LOG = Path(tmp) / "scam_catches.csv"
