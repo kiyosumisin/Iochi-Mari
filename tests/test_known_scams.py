@@ -82,6 +82,11 @@ class World:
             async def send(self, text, view=None, **kw):
                 pinged = [u.id for u in getattr(kw.get("allowed_mentions"), "users", None) or []]
                 log.append(("send", text, view, pinged))
+                n = len(log)
+
+                async def unsend():
+                    log.append(("unsend", n))
+                return T.SimpleNamespace(delete=unsend)
 
         class Att:
             filename, content_type, size = "a.png", "image/png", len(IMG)
@@ -170,6 +175,47 @@ def test_sensei_is_pinged_at_most_every_ten_minutes():
         w.post(GENERAL, f"https://evil{n}.example/", user=40 + n)
     pings = [e[3] for e in w.log if e[0] == "send"]
     assert pings == [[1], []], pings
+
+
+def test_late_posts_of_a_banned_spammer_are_deleted_quietly():
+    w = World()
+    for ch in (1, 2, 3, 4):
+        w.post(ch, f"free nitro {SCAM}")
+    # The first two posts (not yet a burst) asked Sensei; the ban takes those questions
+    # back, and the late fourth post is just deleted.
+    assert w.kinds().count("ban") == 1 and w.kinds().count("unsend") == 2, w.log
+    assert w.kinds()[-1] == "delete" and w.kinds().count("send") == 3
+    w.handler.forgive(42)  # e.g. "Sai - gỡ ban": judged normally again
+    w.handler._media_posts.clear()
+    before = len(w.log)
+    w.post(GENERAL, "hello again")
+    assert len(w.log) == before  # a harmless post is left alone, not deleted
+
+
+def test_images_need_two_phrases_and_gemini_before_being_hidden():
+    import bot.events as ev
+    w = World(honeypot=True)
+    w.handler.config.OCR_ENABLED = True
+    w.feedback.scam_hashes.clear()  # not a known scam image: only the watch looks at it
+    verdict = {"res": None}
+
+    async def classify(image):
+        return verdict["res"]
+    w.handler.agent = T.SimpleNamespace(enabled=True, classify_scam_image=classify)
+    ocr = {"text": "1st Anniversary Celebration Rewards, claim rewards"}
+    old = ev.ocr_image_bytes
+    ev.ocr_image_bytes = lambda data: ocr["text"]
+    try:
+        w.post(GENERAL, image=True)                      # one phrase: a game banner, ignored
+        ocr["text"] = "FREE NITRO giveaway - claim now! scan the qr code"
+        verdict["res"] = {"scam": False, "confidence": 0.9}
+        w.post(GENERAL, image=True, user=43)            # two phrases, Gemini disagrees: ignored
+        assert w.log == [], w.log
+        verdict["res"] = {"scam": True, "confidence": 0.95, "reason": "fake nitro"}
+        w.post(GENERAL, image=True, user=44)            # Gemini agrees: hidden, Sensei asked
+        assert "delete" in w.kinds() and any(e[0] == "send" and e[3] == [1] for e in w.log), w.log
+    finally:
+        ev.ocr_image_bytes = old
 
 
 def test_unlisted_links_admins_and_trusted_domains_are_left_alone():

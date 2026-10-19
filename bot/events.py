@@ -24,6 +24,9 @@ SPAM_CHANNELS = 3
 # Outside the honeypot Mari never bans on a guess: she asks Sensei, pinging at
 # most once per this many seconds.
 PING_EVERY = 600
+# Posts from someone Mari banned less than this many seconds ago (the tail of a
+# spam burst arriving late) are just deleted, without asking anyone.
+AFTER_BAN = 600
 # Gemini must be at least this sure an honeypot image is a scam to ban on it.
 SCAM_IMAGE_CONFIDENCE = 0.8
 
@@ -117,6 +120,7 @@ class MessageHandler:
         self._media_posts: dict[int, deque] = {}  # user id -> (time, channel id) of media/link posts
         self._banned_recently: dict[int, float] = {}  # user id -> ban time, one ban per burst
         self._last_ping = 0.0  # last time Mari pinged Sensei about a suspicious post
+        self._asks: dict[int, list] = {}  # user id -> (time, Mari's in-channel question) about them
 
     def _note_media_post(self, message) -> set[int]:
         """Record a media/link post and return the channels this author posted
@@ -568,6 +572,12 @@ class MessageHandler:
             try:
                 await guild.ban(author, reason=reason, delete_message_days=1)
                 banned = True
+                # Questions to Sensei about this burst's earlier posts are moot now.
+                for _, ask in self._asks.pop(author.id, []):
+                    try:
+                        await ask.delete()
+                    except discord.HTTPException:
+                        pass
                 self._stat(guild, "auto_bans")
                 self._record(guild, author.id, reason=reason)
                 self._reset_warn(f"hp:{author.id}")
@@ -652,6 +662,12 @@ class MessageHandler:
             return
 
         guild = message.guild
+        if guild and time.time() - self._banned_recently.get(message.author.id, 0) < AFTER_BAN:
+            try:  # the rest of a burst from someone just banned: no need to ask Sensei
+                await message.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+            return
         honeypot_id = self._honeypot_channel_id(guild)
         spread = self._note_media_post(message)
 
@@ -738,6 +754,10 @@ class MessageHandler:
         )
         return True
 
+    def forgive(self, user_id: int):
+        """Called on an unban: their next posts are judged normally again."""
+        self._banned_recently.pop(user_id, None)
+
     async def _ask_sensei(self, message, *, kind: str, verdict: str, reason: str, strong: bool,
                           url: str | None = None, image_hash: int | None = None, learn: bool = True,
                           aside: str = ""):
@@ -775,8 +795,11 @@ class MessageHandler:
         if aside:
             mentioned.append(author)
         try:
-            await channel.send(text, view=view, allowed_mentions=discord.AllowedMentions(
+            sent = await channel.send(text, view=view, allowed_mentions=discord.AllowedMentions(
                 users=mentioned, everyone=False, roles=False))
+            now = time.time()
+            asks = [a for a in self._asks.get(author.id, []) if now - a[0] < AFTER_BAN]
+            self._asks[author.id] = asks + [(now, sent)]
         except discord.HTTPException:
             await self._notify(guild, channel, text, view=view)  # no right to speak here: log it instead
 
@@ -813,12 +836,18 @@ class MessageHandler:
             except Exception as exc:
                 logger.warning("Watch OCR failed | %s | %s", att.filename, exc)
                 continue
-            found = scan_ocr_text(text) if text and text.strip() else None
-            if found:  # "scam" = 2+ scam phrases, "suspected" = just one
+            # One scam-like phrase is everyday text ("claim rewards" on a game banner):
+            # ignored. Two or more need Gemini to look at the picture and agree.
+            if (scan_ocr_text(text) if text and text.strip() else None) != "scam":
+                continue
+            res = None
+            if self.agent and getattr(self.agent, "enabled", False):
+                res = await self.agent.classify_scam_image(await asyncio.to_thread(shrink_image, data))
+            if res and res["scam"] and float(res.get("confidence") or 0) >= SCAM_IMAGE_CONFIDENCE:
                 await self._ask_sensei(
-                    message, kind="image", verdict=f"image:{found}",
-                    image_hash=await asyncio.to_thread(_fingerprint, data), strong=found == "scam",
-                    reason="ảnh có nhiều cụm chữ hay gặp ở scam" if found == "scam" else "ảnh có chữ hơi giống scam",
+                    message, kind="image", verdict="image:gemini", strong=True,
+                    image_hash=await asyncio.to_thread(_fingerprint, data),
+                    reason=f"chữ trong ảnh giống scam, và Gemini cũng thấy vậy: {res.get('reason', '')}".strip(": "),
                 )
                 return
 
