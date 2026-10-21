@@ -8,6 +8,29 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 
+async def read_page(url: str, limit: int = 6000):
+    """(title, text) of a public web page for Mari to read to Sensei, or None.
+    Same guard as the scanner: public addresses only, at most 2 MB, HTML or text."""
+    try:
+        async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla/5.0 (compatible; mari-bot/2.1)"},
+                                         timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with get_public(session, url) as resp:
+                ctype = resp.headers.get("Content-Type", "")
+                if "text/html" not in ctype and "text/plain" not in ctype:
+                    return None
+                html = (await resp.content.read(2_000_000)).decode(resp.charset or "utf-8", "ignore")
+    except Exception as exc:
+        logger.info("Could not read %s for chat: %s", url, exc)
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "svg", "nav", "footer", "form"]):
+        tag.decompose()
+    title = soup.title.get_text(strip=True) if soup.title else ""
+    meta = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", attrs={"property": "og:description"})
+    text = " ".join(((meta.get("content") or "") + " " if meta else "").split() + soup.get_text(" ").split())
+    return title, text[:limit]
+
+
 class ContentScanner:
     PHISHING_KEYWORDS = [
         "verify", "verification", "login", "sign in", "password",

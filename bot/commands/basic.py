@@ -169,7 +169,7 @@ class BasicCommands(MariCog):
             embed.add_field(
                 name="Chỉ dành cho Sensei",
                 value=(
-                    "`Mari ơi, <điều muốn nói>` (hoặc `Mari à`, `Mari,` ...) — Trò chuyện với Mari (reply vào câu trả lời để nói tiếp)\n"
+                    "`Mari ơi, <điều muốn nói>` (hoặc `Mari à`, `Mari,` ...) — Trò chuyện với Mari (reply vào câu trả lời để nói tiếp; gửi kèm link hay ảnh thì Mari đọc giúp)\n"
                     "`Mari, <việc cần làm>` — Nhờ Mari bằng lời gần như mọi lệnh `/`: xóa tin, ban, warn, mute (timeout), đặt kênh, tên miền tin cậy, độ nhạy, gửi tin nhắn; xem thống kê, cài đặt, lịch sử, ai bị bắt vì scam, kiểm tra link (việc thay đổi đều có nút xác nhận)\n"
                     "`/check img <image>` — Đọc chữ trong một hình ảnh\n"
                     "`/text <message> [sticker] [channel]` — Nhờ Mari gửi tin nhắn hoặc sticker"
