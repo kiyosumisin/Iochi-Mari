@@ -51,7 +51,7 @@ class Config:
         self.GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
         self.GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
         # Used when the main model is overloaded, out of quota or too slow ("" = none).
-        self.GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+        self.GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.1-flash-lite")
         self.AGENT_ENABLED = _flag("AGENT_ENABLED", "true")
         self.GEMINI_RPM = int(os.getenv("GEMINI_RPM", "15") or "15")    # flash-lite free tier
         self.GEMINI_RPD = int(os.getenv("GEMINI_RPD", "500") or "500")

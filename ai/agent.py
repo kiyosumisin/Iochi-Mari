@@ -273,9 +273,9 @@ class MariAgent:
                 logger.warning("Gemini %s error (attempt %d): %s", model, attempt + 1, str(exc)[:200])
                 code = getattr(exc, "code", None)
                 if isinstance(code, int) and 400 <= code < 500:
-                    # Out of quota: the other model has its own. Anything else
-                    # (bad request): retrying only burns more quota.
-                    if code != 429 or nxt in (None, model):
+                    # Out of quota (429) or model retired (404): the other model may
+                    # still work. Anything else (bad request): retrying only burns quota.
+                    if code not in (404, 429) or nxt in (None, model):
                         return None
             if nxt == model:  # same model again: give it a moment
                 await asyncio.sleep(delay)
