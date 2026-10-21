@@ -1,6 +1,6 @@
 import logging
 from urllib.parse import urlparse, urljoin
-from core.url_utils import URLUtils
+from core.url_utils import URLUtils, get_public
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -81,12 +81,13 @@ class ContentScanner:
             headers = {"User-Agent": "Mozilla/5.0 (compatible; mari-bot/2.1)"}
 
             async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
-                async with session.get(url, allow_redirects=True) as resp:
+                async with get_public(session, url) as resp:  # never a private address (SSRF)
                     # Only scan HTML pages, skip binary/media responses
                     content_type = resp.headers.get("Content-Type", "")
                     if "text/html" not in content_type:
                         return None
-                    html = await resp.text(errors="ignore")
+                    # At most 2 MB: a huge page can't eat the VPS's memory.
+                    html = (await resp.content.read(2_000_000)).decode(resp.charset or "utf-8", "ignore")
                     final_url = str(resp.url)
 
             soup = BeautifulSoup(html, "html.parser")

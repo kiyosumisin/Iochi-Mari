@@ -14,3 +14,4 @@ data/feedback_cases.json
 data/image_hashes.json
 ai/feedback.csv
 .serena/
+ai/logs/

@@ -82,6 +82,52 @@ def test_popular_sites_trusted_but_not_pages_anyone_can_publish():
         assert not pop.contains(host), host
 
 
+def test_mari_never_opens_private_addresses():
+    import asyncio
+    import types as T
+    from core.url_utils import BlockedURL, _is_public, get_public
+
+    async def check():
+        for url in ("http://127.0.0.1/", "http://localhost:8000/admin", "http://10.0.0.5/",
+                    "http://192.168.1.1/", "http://169.254.169.254/metadata", "http://[::1]/",
+                    "file:///etc/passwd", "ftp://8.8.8.8/", "http://0.0.0.0/"):
+            assert not await _is_public(url), url
+        assert await _is_public("http://8.8.8.8/")
+
+        # A public link that redirects into the private network is stopped at the hop.
+        class Resp:
+            status, headers, url = 302, {"Location": "http://169.254.169.254/latest"}, "http://8.8.8.8/x"
+            def release(self): pass
+
+        async def get(url, allow_redirects):
+            return Resp()
+        try:
+            async with get_public(T.SimpleNamespace(get=get), "http://8.8.8.8/x"):
+                raise AssertionError("followed a redirect into the private network")
+        except BlockedURL:
+            pass
+    asyncio.run(check())
+
+
+def test_hidden_characters_and_lookalikes_cannot_dodge_the_lists():
+    d = URLUtils.get_domain
+    assert d("https://disc​ord.gift./claim") == "discord.gift"     # zero-width space, trailing dot
+    assert d("https://DISCORD.GIFT/x") == "discord.gift"
+    assert d("https://dіscord.gift/").startswith("xn--")               # Cyrillic і: punycode, not discord.gift
+    assert d("https://discord.com@evil.example/") == "evil.example"
+
+
+def test_costly_checks_cover_at_most_five_links_known_scams_first():
+    import types as T
+    from bot.events import MessageHandler
+    h = MessageHandler.__new__(MessageHandler)
+    h.evaluator = T.SimpleNamespace(is_known_scam=lambda dom: dom == "d-giftnitro.com")
+    msg = T.SimpleNamespace(content=" ".join(f"https://ok{i}.example/" for i in range(8))
+                            + " https://ok0.example/ https://d-giftnitro.com/claim")
+    links = h._links(msg)
+    assert len(links) == 5 and links[0] == "https://d-giftnitro.com/claim"
+
+
 if __name__ == "__main__":
     tests = [f for name, f in dict(globals()).items() if name.startswith("test_")]
     for t in tests:

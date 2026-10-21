@@ -19,77 +19,14 @@ Features returned:
   copyright_mismatch  : 1 if footer copyright mentions a brand not in the domain
 """
 
-import json
 import logging
-import logging.handlers
 import re
-import textwrap
-from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import urlparse, urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Page content logger — writes one JSON record per fetched page
-# ---------------------------------------------------------------------------
-_PAGE_LOG_PATH = Path(__file__).resolve().parent / "logs" / "page_content.log"
-_page_logger: logging.Logger | None = None
-
-
-def _get_page_logger() -> logging.Logger:
-    """
-    Returns a dedicated logger that writes structured JSON records to
-    logs/page_content.log (rotating at 10 MB, keeping 5 backups).
-    Created once, reused on subsequent calls.
-    """
-    global _page_logger
-    if _page_logger is not None:
-        return _page_logger
-
-    _PAGE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    pl = logging.getLogger("ai.page_content")
-    pl.setLevel(logging.INFO)
-    pl.propagate = False  # don't bubble up to root logger
-
-    handler = logging.handlers.RotatingFileHandler(
-        _PAGE_LOG_PATH,
-        maxBytes=10 * 1024 * 1024,  # 10 MB
-        backupCount=5,
-        encoding="utf-8",
-    )
-    handler.setFormatter(logging.Formatter("%(message)s"))  # raw JSON lines
-    pl.addHandler(handler)
-
-    _page_logger = pl
-    return _page_logger
-
-
-def _log_page(
-    url: str,
-    final_url: str,
-    status_code: int,
-    title: str,
-    text_snippet: str,
-    features: dict,
-) -> None:
-    """Write one JSON record to page_content.log."""
-    record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "url": url,
-        "final_url": final_url,
-        "status_code": status_code,
-        "title": title,
-        # First 500 chars of visible text — enough context without flooding disk
-        "text_snippet": textwrap.shorten(text_snippet, width=500, placeholder="..."),
-        "features": features,
-    }
-    _get_page_logger().info(json.dumps(record, ensure_ascii=False))
-
 
 # ---------------------------------------------------------------------------
 
@@ -250,11 +187,6 @@ def analyze_page(url: str) -> dict:
             if words and not any(w in domain_words for w in words[:3]):
                 copyright_mismatch = 1
 
-    # ── Visible text snippet for logging ────────────────────────────
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
-    visible_text = soup.get_text(" ", strip=True)
-
     result = {
         "fetch_success": 1,
         "redirect_count": redirect_count,
@@ -270,15 +202,5 @@ def analyze_page(url: str) -> dict:
         "favicon_external": favicon_external,
         "copyright_mismatch": copyright_mismatch,
     }
-
-    # ── Write to page content log ────────────────────────────────────
-    _log_page(
-        url=url,
-        final_url=resp.url,
-        status_code=resp.status_code,
-        title=title,
-        text_snippet=visible_text,
-        features=result,
-    )
 
     return result

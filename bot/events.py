@@ -27,6 +27,9 @@ PING_EVERY = 600
 # Posts from someone Mari banned less than this many seconds ago (the tail of a
 # spam burst arriving late) are just deleted, without asking anyone.
 AFTER_BAN = 600
+# Links per message that get the costly checks (model, Safe Browsing, VirusTotal,
+# page fetch); a message with 50 links must not drain quotas or stall the bot.
+MAX_LINKS = 5
 # Gemini must be at least this sure an honeypot image is a scam to ban on it.
 SCAM_IMAGE_CONFIDENCE = 0.8
 
@@ -37,73 +40,6 @@ def _fingerprint(data: bytes):
         return dhash(data)
     except Exception:
         return None
-
-
-def _log_page_content(url: str, verdict: str) -> None:
-    try:
-        from ai.page_analyzer import analyze_page
-        import requests
-        import textwrap
-        from bs4 import BeautifulSoup
-
-        _HEADERS = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            )
-        }
-
-        resp = requests.get(url, timeout=8, headers=_HEADERS, allow_redirects=True)
-        soup = BeautifulSoup(resp.text, "lxml")
-
-        title = ""
-        if soup.title and soup.title.string:
-            title = soup.title.string.strip()
-
-        for tag in soup(["script", "style", "noscript"]):
-            tag.decompose()
-        content = textwrap.shorten(
-            soup.get_text(" ", strip=True), width=300, placeholder="..."
-        )
-
-        features = analyze_page(url)
-
-        signals = []
-        if features.get("has_login_form"):
-            signals.append("login_form")
-        if features.get("external_form_action"):
-            signals.append("ext_form_action")
-        if features.get("domain_changed"):
-            signals.append("domain_changed")
-        if features.get("hidden_iframe_count", 0) > 0:
-            signals.append(f"hidden_iframes={features['hidden_iframe_count']}")
-        if features.get("meta_refresh"):
-            signals.append("meta_refresh")
-        if features.get("favicon_external"):
-            signals.append("ext_favicon")
-        if features.get("copyright_mismatch"):
-            signals.append("copyright_mismatch")
-        signals_str = ",".join(signals) if signals else "none"
-
-        logger.info(
-            "page_content | url=%s | status=%s | verdict=%s | "
-            "redirects=%s | domain_changed=%s | has_login=%s | "
-            "ext_link_ratio=%s | signals=%s | title=%s | content=%s",
-            url,
-            resp.status_code,
-            verdict,
-            features.get("redirect_count", 0),
-            features.get("domain_changed", 0),
-            features.get("has_login_form", 0),
-            features.get("external_link_ratio", 0.0),
-            signals_str,
-            title or "(no title)",
-            content or "(no content)",
-        )
-
-    except Exception as exc:
-        logger.warning("page_content fetch failed | url=%s | error=%s", url, exc)
 
 
 class MessageHandler:
@@ -502,7 +438,7 @@ class MessageHandler:
             if guild and self.guild_settings
             else None
         )
-        for url in URLUtils.extract_urls(message.content or ""):
+        for url in self._links(message):
             verdict = await self.evaluator.evaluate(url, threshold=guild_threshold)
             if verdict not in ("safe", "none"):
                 return True, f"link:{verdict}", url, {"url": url}
@@ -683,7 +619,7 @@ class MessageHandler:
         threshold = (
             self.guild_settings.get_threshold(guild.id) if guild and self.guild_settings else None
         )
-        for url in URLUtils.extract_urls(message.content):
+        for url in self._links(message):
             if await self._check_url(message, url, guild, threshold):
                 return  # message already removed; don't act on it twice
 
@@ -754,6 +690,14 @@ class MessageHandler:
         )
         return True
 
+    def _links(self, message) -> list[str]:
+        """The message's links, without repeats, known scams first (the list check is
+        free, so a scam hidden behind five harmless links is still reached), at most
+        MAX_LINKS of them."""
+        urls = list(dict.fromkeys(URLUtils.extract_urls(message.content or "")))
+        urls.sort(key=lambda u: not self.evaluator.is_known_scam(URLUtils.get_domain(u)))
+        return urls[:MAX_LINKS]
+
     def forgive(self, user_id: int):
         """Called on an unban: their next posts are judged normally again."""
         self._banned_recently.pop(user_id, None)
@@ -809,7 +753,7 @@ class MessageHandler:
         if not message.guild or self._is_admin(message.author):
             return
         trusted = self.guild_settings.get_whitelist(message.guild.id) if self.guild_settings else set()
-        for url in URLUtils.extract_urls(message.content or ""):
+        for url in self._links(message):
             if URLUtils.domain_in(URLUtils.get_domain(url), trusted):
                 continue
             detail = await self.evaluator.evaluate_detailed(url)
@@ -886,10 +830,6 @@ class MessageHandler:
         )
         if verdict in ("safe", "none"):
             return False
-
-        # Fire-and-forget in a thread: the page-content log does blocking HTTP
-        # fetches, so never let it stall the event loop or the action.
-        asyncio.create_task(asyncio.to_thread(_log_page_content, url, verdict))
 
         # Borderline agent layer: an uncertain AI-only verdict goes to the Gemini
         # agent for review instead of an automatic ban. Falls back to the normal
