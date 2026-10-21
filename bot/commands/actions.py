@@ -282,7 +282,7 @@ async def plan(bot, request: discord.Message, action: dict, forget=None):
                 if p["chat"] else f"> Xóa {p['count']} tin nhắn{scope} trong kênh này")
         return what, purge, True
 
-    if kind not in ("ban", "unban", "timeout", "set_channel", "whitelist", "threshold", "say"):
+    if kind not in ("ban", "unban", "timeout", "warn", "set_channel", "whitelist", "threshold", "say"):
         return None, None, False
     if not guild:
         return "Việc này em chỉ làm được trong server thôi ạ.", None, False
@@ -376,6 +376,18 @@ async def plan(bot, request: discord.Message, action: dict, forget=None):
             gs.record_violation(guild.id, member.id, reason=reason)
             return f"Em đã mời **{member.display_name}** rời server rồi ạ."
         return f"> Ban {target}, lý do: {reason}", ban, False
+
+    if kind == "warn":
+        reason = str(action.get("reason") or "").strip() or "Sensei nhờ Mari nhắc nhở"
+
+        async def warn():
+            gs.record_violation(guild.id, member.id, reason=f"Cảnh cáo: {reason}")
+            n = len(gs.get_violations(guild.id, member.id))
+            await request.channel.send(
+                f"{member.mention}, Mari xin phép nhắc bạn: {reason}. Mong bạn để ý giúp Mari nhé.",
+                allowed_mentions=discord.AllowedMentions(users=[member]))
+            return f"Em đã nhắc nhở **{member.display_name}** rồi ạ (lần ghi nhận thứ {n} trong lịch sử)."
+        return f"> Cảnh cáo {target} trong kênh này, lý do: {reason}", warn, False
 
     try:
         minutes = int(action.get("minutes"))
