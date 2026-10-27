@@ -211,10 +211,10 @@ class MariAgent:
             try:
                 # Optional relay (relay/ folder, deployed on Vercel) for hosts where
                 # Google geo-blocks the Gemini API, e.g. a Hong Kong VPS.
-                relay = config.GEMINI_BASE_URL
+                relay, token = config.GEMINI_BASE_URL, config.GEMINI_RELAY_TOKEN
                 http_options = types.HttpOptions(
                     base_url=relay,
-                    headers={"x-relay-token": config.GEMINI_RELAY_TOKEN},
+                    headers={"x-relay-token": token} if token else None,
                 ) if relay else None
                 self._client = genai.Client(api_key=self.api_key, http_options=http_options)
                 logger.info("MariAgent enabled (model=%s, fallback=%s)", self.model_name, self._models[1])
@@ -246,9 +246,6 @@ class MariAgent:
                         reserve: float = 0.0):
         if not self.enabled:
             return None
-        if not await self._reserve_slot(reserve):
-            logger.warning("Gemini rate limit reached — skipping call (fallback).")
-            return None
 
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -256,8 +253,17 @@ class MariAgent:
             response_mime_type="application/json" if json_out else None,
         )
         delay = 1.0
+        dead = set()  # models that said 404/429 during this call: asking again is wasted
         for attempt, model in enumerate(self._models):
-            nxt = self._models[attempt + 1] if attempt + 1 < len(self._models) else None
+            if model in dead:
+                continue
+            # Every attempt is a real request Google counts, so each takes a slot.
+            if not await self._reserve_slot(reserve):
+                logger.warning("Gemini rate limit reached — skipping call (fallback).")
+                return None
+            if attempt and self._models[attempt - 1] == model:  # same model again: give it a moment
+                await asyncio.sleep(delay)
+                delay *= 2
             try:
                 resp = await asyncio.wait_for(
                     self._client.aio.models.generate_content(
@@ -279,11 +285,9 @@ class MariAgent:
                 if isinstance(code, int) and 400 <= code < 500:
                     # Out of quota (429) or model retired (404): the other model may
                     # still work. Anything else (bad request): retrying only burns quota.
-                    if code not in (404, 429) or nxt in (None, model):
+                    if code not in (404, 429):
                         return None
-            if nxt == model:  # same model again: give it a moment
-                await asyncio.sleep(delay)
-                delay *= 2
+                    dead.add(model)
         return None
 
     # -- public: explain a borderline case -----------------------------------
