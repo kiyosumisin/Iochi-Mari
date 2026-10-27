@@ -22,11 +22,5 @@ joblib==1.6.0
 pillow==13.0.0
 pytesseract==0.3.13
 
-# ── API Service (app.py — FastAPI URL-prediction service) ────
-fastapi==0.141.1
-uvicorn[standard]==0.53.0
-pydantic==2.13.5
-
-# ── AI Agent (Gemini analysis layer for borderline cases) ────
+# ── AI Agent (Gemini) ────────────────────────────────────────
 google-genai==2.25.0          # Google Gen AI SDK (replaces the deprecated google-generativeai)
-python-whois==0.9.6           # domain-age lookups during investigation

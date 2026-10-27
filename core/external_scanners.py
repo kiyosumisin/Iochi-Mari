@@ -1,4 +1,9 @@
+import base64
+import logging
+
 import aiohttp
+
+logger = logging.getLogger(__name__)
 
 
 class ExternalScanners:
@@ -24,33 +29,37 @@ class ExternalScanners:
             async with aiohttp.ClientSession() as s:
                 async with s.post(api, json=payload, timeout=10) as r:
                     data = await r.json()
+                    if r.status != 200:
+                        logger.warning("Safe Browsing error %s: %s", r.status, data.get("error"))
+                        return None
                     return "malware" if data.get("matches") else None
-        except Exception:
+        except Exception as exc:
+            logger.warning("Safe Browsing failed: %s", exc)
             return None
 
     async def virustotal(self, url):
+        """VirusTotal's last analysis of this URL. A URL it has never seen (404)
+        counts as no finding; it is not submitted, which would cost a second
+        request of the small free quota for an answer that comes later."""
         if not self.config.VIRUSTOTAL_API_KEY:
             return None
 
+        url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
         try:
             async with aiohttp.ClientSession(
                 headers={"x-apikey": self.config.VIRUSTOTAL_API_KEY}
             ) as s:
-                async with s.post(
-                    "https://www.virustotal.com/api/v3/urls",
-                    data={"url": url},
-                    timeout=10,
-                ) as r:
-                    data = await r.json()
-                    vid = data.get("data", {}).get("id")
-
-                if not vid:
-                    return None
-
-                async with s.get(f"https://www.virustotal.com/api/v3/urls/{vid}") as r2:
-                    info = await r2.json()
+                async with s.get(f"https://www.virustotal.com/api/v3/urls/{url_id}", timeout=10) as r:
+                    if r.status == 404:
+                        return None
+                    info = await r.json()
+                    if r.status != 200:
+                        logger.warning("VirusTotal error %s: %s", r.status, info.get("error"))
+                        return None
                     stats = info["data"]["attributes"]["last_analysis_stats"]
                     if stats.get("malicious", 0) + stats.get("suspicious", 0) > 0:
                         return "malware"
-        except Exception:
+                    return None
+        except Exception as exc:
+            logger.warning("VirusTotal failed: %s", exc)
             return None

@@ -69,6 +69,8 @@ class URLEvaluator:
             "top_features": top_features,
             "sources": sources,
         }
+        if len(self.cache) > 5000:  # drop expired verdicts so the cache can't grow forever
+            self.cache = {k: v for k, v in self.cache.items() if now - v["time"] < self.CACHE_TTL}
         self.cache[cache_key] = {"time": now, "detail": detail}
         return detail
 

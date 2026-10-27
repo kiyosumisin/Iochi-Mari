@@ -111,7 +111,7 @@ class FeedbackStore:
 
     @staticmethod
     def _append_url_label(url: str, malicious: bool):
-        # Same columns, same order as app.py's /feedback, which writes this file too.
+        # The columns ai/train.py --feedback reads.
         new = not FEEDBACK_CSV.exists() or FEEDBACK_CSV.stat().st_size == 0
         FEEDBACK_CSV.parent.mkdir(parents=True, exist_ok=True)
         with FEEDBACK_CSV.open("a", newline="", encoding="utf-8") as f:

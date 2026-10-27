@@ -10,7 +10,7 @@ def _flag(name: str, default: str) -> bool:
 class Config:
     """Every runtime setting the bot reads, in one place (loaded from .env).
 
-    The standalone ML tools (ai/predict.py, ai/train.py, app.py) keep reading
+    The standalone ML tools (ai/predict.py, ai/train.py) keep reading
     their own AI_* variables so they still work without the bot.
     """
 
@@ -35,15 +35,8 @@ class Config:
         self.AI_OVERRIDE_THRESHOLD = float(os.getenv("AI_OVERRIDE_THRESHOLD", "0.9") or "0.9")
         # At or below this (and no heuristic hit) a URL skips the slow scanners.
         self.AI_SAFE_THRESHOLD = float(os.getenv("AI_SAFE_THRESHOLD", "0.15") or "0.15")
-        # An AI-only phishing verdict (no blacklist/scanner evidence) in this
-        # band goes to the Gemini agent for review instead of an automatic ban.
-        self.AI_BORDERLINE_LOW = float(os.getenv("AI_BORDERLINE_LOW", "0.0") or "0.0")
-        self.AI_BORDERLINE_HIGH = float(os.getenv("AI_BORDERLINE_HIGH") or self.AI_OVERRIDE_THRESHOLD)
 
         # -- Moderation ------------------------------------------------------
-        self.TIMEOUT_DURATIONS = [
-            d.strip() for d in os.getenv("TIMEOUT_DURATIONS", "10m,1h,6h,1d,3d").split(",") if d.strip()
-        ]
         self.HONEYPOT_WARN_LIMIT = int(os.getenv("HONEYPOT_WARN_LIMIT", "3") or "3")
         self.OCR_ENABLED = _flag("OCR_ENABLED", "true")
 

@@ -73,11 +73,14 @@ SHORTENER_DOMAINS = {
 }
 
 class URLUtils:
-    URL_REGEX = re.compile(r"(https?://[^\s]+)")
+    # A link stops at Discord markdown around it (<no embed>, ||spoiler||, **bold**,
+    # (brackets), `code`), so "<https://scam.gift>" is read as scam.gift, not "scam.gift>".
+    URL_REGEX = re.compile(r"https?://[^\s<>|*()\[\]{}\"'`]+", re.IGNORECASE)
 
     @staticmethod
     def extract_urls(text: str):
-        return URLUtils.URL_REGEX.findall(text)
+        # Punctuation ending a sentence ("scam.gift, nhanh!") or __underline__/~~strike~~.
+        return [u.rstrip(".,!?:;_~") for u in URLUtils.URL_REGEX.findall(text)]
 
     @staticmethod
     def get_domain(url: str):

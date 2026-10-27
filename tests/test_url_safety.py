@@ -128,6 +128,14 @@ def test_costly_checks_cover_at_most_five_links_known_scams_first():
     assert len(links) == 5 and links[0] == "https://d-giftnitro.com/claim"
 
 
+def test_links_are_cut_out_of_discord_markdown():
+    for text in ("<https://scam.gift/x>", "||https://scam.gift/x||", "**https://scam.gift/x**",
+                 "(https://scam.gift/x)", "xem https://scam.gift/x, nhanh lên!", "`https://scam.gift/x`",
+                 "__https://scam.gift/x__", "[bấm đây](https://scam.gift/x)", "HTTPS://scam.gift/x."):
+        urls = URLUtils.extract_urls(text)
+        assert [URLUtils.get_domain(u) for u in urls] == ["scam.gift"], (text, urls)
+
+
 if __name__ == "__main__":
     tests = [f for name, f in dict(globals()).items() if name.startswith("test_")]
     for t in tests:

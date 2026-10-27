@@ -202,7 +202,7 @@ def load_model():
     # only reads probability/is_malicious, not the SHAP explanation. So building
     # the explainer is opt-in via AI_ENABLE_SHAP. This keeps the first prediction
     # fast and avoids crashing if the shap/IPython import chain is broken/slow on
-    # the host. (app.py can set AI_ENABLE_SHAP=true to get /predict explanations.)
+    # the host.
     _FEATURE_NAMES = _build_feature_names(_MODEL)
     if os.getenv("AI_ENABLE_SHAP", "false").lower() in ("1", "true", "yes"):
         _EXPLAINER = _build_explainer(_MODEL)

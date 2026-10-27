@@ -3,6 +3,7 @@ lone post, ban a scam bot. Run: python tests/test_known_scams.py"""
 
 import asyncio
 import io
+import itertools
 import sys
 import tempfile
 import types as T
@@ -29,6 +30,7 @@ def _png() -> bytes:
 
 
 IMG = _png()
+_ids = itertools.count(1)
 
 
 class World:
@@ -65,7 +67,7 @@ class World:
 
         evaluator = T.SimpleNamespace(is_known_scam=lambda d: d == "d-giftnitro.com",
                                       evaluate_detailed=evaluate_detailed)
-        cfg = T.SimpleNamespace(TIMEOUT_DURATIONS=["10m"], HONEYPOT_WARN_LIMIT=3, OCR_ENABLED=False,
+        cfg = T.SimpleNamespace(HONEYPOT_WARN_LIMIT=3, OCR_ENABLED=False,
                                 HONEYPOT_CHANNEL_ID=0, LOG_CHANNEL_ID=0, AI_OVERRIDE_THRESHOLD=0.9,
                                 OWNER_ID=1)
         self.handler = MessageHandler(evaluator, cfg, gs, None, self.feedback)
@@ -89,7 +91,7 @@ class World:
                 return T.SimpleNamespace(delete=unsend)
 
         class Att:
-            filename, content_type, size = "a.png", "image/png", len(IMG)
+            filename, content_type, size, id = "a.png", "image/png", len(IMG), next(_ids)
 
             async def read(self):
                 return IMG
@@ -185,7 +187,7 @@ def test_late_posts_of_a_banned_spammer_are_deleted_quietly():
     # back, and the late fourth post is just deleted.
     assert w.kinds().count("ban") == 1 and w.kinds().count("unsend") == 2, w.log
     assert w.kinds()[-1] == "delete" and w.kinds().count("send") == 3
-    w.handler.forgive(42)  # e.g. "Sai - gỡ ban": judged normally again
+    w.handler.forgive(7, 42)  # e.g. "Sai - gỡ ban": judged normally again
     w.handler._media_posts.clear()
     before = len(w.log)
     w.post(GENERAL, "hello again")
@@ -216,6 +218,27 @@ def test_images_need_two_phrases_and_gemini_before_being_hidden():
         assert "delete" in w.kinds() and any(e[0] == "send" and e[3] == [1] for e in w.log), w.log
     finally:
         ev.ocr_image_bytes = old
+
+
+def test_a_server_without_honeypot_never_bans_on_a_guess():
+    w = World(honeypot=False)
+    w.verdicts["https://evil.example/login"] = {"verdict": "phishing", "probability": 0.97, "sources": []}
+    w.post(GENERAL, "https://evil.example/login")
+    assert "ban" not in w.kinds() and "delete" in w.kinds(), w.log
+    assert any(e[0] == "send" and "Sensei ơi" in e[1] for e in w.log)
+    w.post(GENERAL, f"<{SCAM}>", user=43)            # a listed scam, even wrapped in <...>
+    assert "ban" not in w.kinds() and "Liên kết: `" + SCAM in w.log[-1][1], w.log
+
+
+def test_a_ban_in_one_server_does_not_touch_another():
+    w = World()
+    for ch in (1, 2, 3):
+        w.post(ch, f"free nitro {SCAM}")
+    assert w.kinds().count("ban") == 1
+    w.guild.id = 8  # same person, another server: judged on its own
+    before = len(w.log)
+    w.post(GENERAL, "hello")
+    assert len(w.log) == before, w.log[before:]
 
 
 def test_unlisted_links_admins_and_trusted_domains_are_left_alone():

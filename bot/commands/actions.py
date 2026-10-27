@@ -355,7 +355,7 @@ async def plan(bot, request: discord.Message, action: dict, forget=None):
 
         async def unban():
             await guild.unban(user, reason="Sensei nhờ Mari gỡ ban")
-            bot.handler.forgive(user.id)
+            bot.handler.forgive(guild.id, user.id)
             return f"Em đã gỡ ban cho **{user.name}** rồi ạ."
         return f"> Gỡ ban **{user.name}** (ID `{user.id}`)", unban, False
 

@@ -16,19 +16,18 @@ Sisterhood), so all of the bot's messages speak in her calm, caring voice.
   scanners (Google Safe Browsing, VirusTotal).
 - **Image OCR** — extracts text from attached images (Tesseract) and flags scam content.
 - **Honeypot channel** — a bait channel where real members are told not to post; any
-  scam link/image there is banned instantly, while the bot leaves every other channel
-  alone (near-zero false positives).
-- **Auto-moderation** — deletes offending messages and bans/timeouts the author.
-- **Gemini agent layer** *(optional)* — for borderline cases the classifier is unsure
-  about, a Gemini agent investigates and writes a short explanation to the mod log
-  instead of auto-banning; `/why` lets mods ask about a user afterwards.
+  scam link/image there is banned instantly.
+- **Never a ban on a guess** — in every other channel a suspicious post is hidden and
+  Sensei is asked, right there, to **Ban** or **Bỏ qua**.
+- **Gemini agent layer** *(optional)* — a short note on links only the classifier
+  flagged, a second look at scam-like images, and `/why` for mods afterwards.
 - **Per-guild configuration via slash commands** — channels, whitelist and sensitivity
   are all set in Discord; no need to edit files per server.
 - **Moderator feedback** — every ban notice carries *Correct* / *Wrong - unban* buttons,
-  and every borderline case *Ban* / *Dismiss*. One click fixes the mistake, and the
+  and every question to Sensei *Ban* / *Bỏ qua*. One click fixes the mistake, and the
   answer is kept for retraining (links) or remembered as an image fingerprint.
 - **Known scam images** — once an image is confirmed as a scam (by a moderator, or
-  by Gemini with high confidence in the honeypot), re-posts of it are banned in
+  by Gemini with high confidence in the honeypot), re-posts of it are caught in
   **every** channel, even resized or recompressed. Images a moderator marked as
   safe are never punished again.
 - **Evidence log** — every successful catch is recorded to `log/scam_catches.csv` and
@@ -44,26 +43,18 @@ resolution → whitelist/blacklist → heuristic scan → AI classifier → (in 
 content scan + Google Safe Browsing + VirusTotal. The strongest verdict wins:
 `malware`/`phishing` > `gambling`/`scam` > `safe`.
 
-Actions taken:
+Actions taken (the same rule in every server):
 
-| Verdict | Action |
+| Where | Action |
 |---|---|
-| malware / phishing / scam | delete message + ban |
-| gambling | delete + escalating timeout (warn 1–5, then ban) |
-| scam image (OCR) | delete + ban |
+| honeypot channel (if set) | scam link/image → instant ban; an accidental post → delete + warning, ban after the warning limit |
+| a known scam (scam lists, blacklist, fingerprinted image) anywhere | delete + warning, Sensei asked; ban in the honeypot or for a burst across 3+ channels |
+| any other channel | never a ban on a guess: a strong suspicion (Safe Browsing/VirusTotal, or the model at `AI_OVERRIDE_THRESHOLD`+) is hidden and Sensei is asked in that channel with **Ban / Bỏ qua**; a weak one only goes to the log channel |
 
-When a **honeypot channel** is set, the bot moderates **only** that channel: a scam
-link/image → instant ban; an accidental benign post → delete + warning, with a ban
-after the warning limit is exceeded. Admins are never punished there.
-
-**Borderline cases (optional Gemini agent).** When the AI probability falls in the
-uncertain band (`AI_BORDERLINE_LOW`–`AI_BORDERLINE_HIGH`, default 0.4–0.7) and no hard
-signal (blacklist / external scanner) fired, the bot does **not** auto-ban. Instead the
-Gemini agent decides whether to gather more data (recent messages, WHOIS domain age),
-writes a 2-3 sentence assessment, and flags the case to the mod log for a human to
-decide. If Gemini is unavailable, times out, or is rate-limited, it falls back to the
-original LightGBM action. This runs only in normal mode (not the honeypot) and only for
-borderline cases — every other message uses the fast path unchanged.
+Images outside the honeypot need two scam phrases in the OCR text **and** Gemini
+agreeing before they are hidden. For a link only the model flagged, Gemini adds a
+short note to Sensei's question (also what `/why` answers from). Admins are never
+punished.
 
 All moderation notices go to the configured **log channel** (`/logchannel`), keeping
 public channels clean.
@@ -83,7 +74,6 @@ public channels clean.
 ├── data/                # whitelist / blacklist / guild_settings / warnings (JSON)
 ├── log/                 # Log files + scam_catches.csv
 ├── run.py               # Bot entry point
-├── app.py               # Optional FastAPI service (URL prediction + feedback/retrain)
 ├── requirements.txt
 └── README.md
 ```
@@ -100,7 +90,7 @@ public channels clean.
   - Linux: `sudo apt-get install tesseract-ocr`
   - For Vietnamese OCR also install the `vie` language data and set `OCR_LANG=vie+eng`.
 - A **Discord bot application** (token + privileged intents — see below)
-- *(Optional)* a **Gemini API key** to enable the borderline-case agent layer
+- *(Optional)* a **Gemini API key** to enable the agent layer
   (`google-genai` and `python-whois` ship in `requirements.txt`)
 
 ---
@@ -147,7 +137,7 @@ best configured with the slash commands below (stored per server).
 DISCORD_TOKEN=your_discord_bot_token
 GOOGLE_API_KEY=your_key        # optional — enables Google Safe Browsing
 VIRUSTOTAL_API_KEY=your_key    # optional — enables VirusTotal
-GEMINI_API_KEY=your_key        # optional — enables the borderline-case agent + /why
+GEMINI_API_KEY=your_key        # optional — enables the Gemini agent + /why
 ```
 
 ### Optional tuning (environment variables)
@@ -159,16 +149,14 @@ GEMINI_API_KEY=your_key        # optional — enables the borderline-case agent 
 | `OCR_LANG` | `eng` | Tesseract language(s), e.g. `vie+eng` |
 | `TESSERACT_CMD` | auto | Path to the `tesseract` binary |
 | `AI_THRESHOLD` | model | Decision threshold for the AI classifier |
-| `AI_OVERRIDE_THRESHOLD` | `0.9` | At or above this, an AI phishing verdict is acted on directly (also overrides a gambling tag) |
-| `AI_ENABLE_SHAP` | `false` | Build SHAP explanations (heavy; only needed for `app.py`) |
+| `AI_OVERRIDE_THRESHOLD` | `0.9` | At or above this, an AI-only verdict hides the post and asks Sensei (below it, only a log note) |
+| `AI_ENABLE_SHAP` | `false` | Build SHAP explanations (heavy; the bot does not use them) |
 | `AI_MODEL_PATH` | `ai/model.pkl` | Custom model path |
-| `TIMEOUT_DURATIONS` | `10m,1h,6h,1d,3d` | Escalating timeout ladder for gambling |
 | `HONEYPOT_WARN_LIMIT` | `3` | Honeypot warnings before a ban |
 | `AGENT_ENABLED` | `true` | Master switch for the Gemini agent (also needs `GEMINI_API_KEY`) |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model name (flash-lite: far higher free quota than flash) |
 | `GEMINI_FALLBACK_MODEL` | `gemini-3.1-flash-lite` | Tried when the main model is overloaded, out of quota or slower than `GEMINI_TIMEOUT` (empty = off) |
 | `GEMINI_BASE_URL` / `GEMINI_RELAY_TOKEN` | — | Route Gemini calls through the `relay/` Vercel function (needed on hosts Google geo-blocks, e.g. Hong Kong) |
-| `AI_BORDERLINE_LOW` / `AI_BORDERLINE_HIGH` | `0.0` / `0.9` | AI-only phishing verdicts in this band go to the Gemini agent for review instead of an automatic ban |
 | `GEMINI_RPM` / `GEMINI_RPD` | `15` / `500` | Gemini rate limits (free tier of gemini-3.5-flash-lite; check ai.dev/rate-limit) |
 | `GEMINI_TIMEOUT` | `15` | Seconds to wait for a model before trying the fallback model |
 
@@ -237,39 +225,17 @@ python -m ai.train --augment --feedback
 ```
 
 The bot itself only uses the probability/verdict, so SHAP explainability is **off by
-default**. Enable it (e.g. for `app.py`) with `AI_ENABLE_SHAP=true`.
+default**. Enable it with `AI_ENABLE_SHAP=true`.
 
 ---
 
-## Gemini agent layer (borderline cases)
+## Gemini agent layer
 
-`ai/agent.py` adds an optional Gemini-powered layer used **only** for borderline URL
-cases (probability inside the borderline band, no hard signal). It:
-
-- **investigates** — decides as structured JSON whether to fetch recent messages or a
-  WHOIS domain-age lookup;
-- **explains** — writes a short English assessment to the mod log (no auto-ban); and
-- answers **`/why <user>`** — a moderator can ask why a user was flagged, and the agent
-  replies in the channel from the recorded case log.
-
-Every call is logged to `log/agent_calls.jsonl` (git-ignored). The layer is
-rate-limited and fails safe: any error / timeout / rate-limit falls back to the original
-LightGBM decision. It stays disabled unless `GEMINI_API_KEY` is set and
-`google-genai` is installed. System instructions (fixed rules) are kept separate
-from the per-case prompt.
-
----
-
-## Optional API service (`app.py`)
-
-A standalone FastAPI service exposing `POST /predict`, `POST /feedback`,
-`POST /feedback/retrain` and `GET /health`:
-
-```bash
-uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1
-```
-
-Set `AI_ENABLE_SHAP=true` if you want SHAP explanations in the `/predict` response.
+`ai/agent.py` is an optional Gemini layer: notes on links only the model flagged,
+`/why <user>`, scam-image checks, flag translations and Sensei's chat (see the module
+docstring). Every case call is logged to `log/agent_calls.jsonl` (git-ignored). It is
+rate-limited and fails safe: on any error, timeout or rate limit Mari carries on
+without it. It stays disabled unless `GEMINI_API_KEY` is set.
 
 ---
 
@@ -312,7 +278,7 @@ either stops.
 - **OCR reads nothing** — verify Tesseract is installed (and the `vie` data for
   Vietnamese), or set `OCR_ENABLED=false`.
 - **Notices appear in the public channel** — set a log channel with `/logchannel set`.
-- **Borderline cases not flagged** — set `GEMINI_API_KEY`, install `google-genai`,
+- **No Gemini notes** — set `GEMINI_API_KEY`, install `google-genai`,
   and look for "MariAgent enabled" in `log/mari.log`.
 
 ---

@@ -4,15 +4,14 @@ import time
 import asyncio
 from collections import deque
 from pathlib import Path
-from datetime import timedelta, datetime, timezone
+from datetime import datetime, timezone
 import discord
 import logging
 from core.url_utils import URLUtils
 from core.guild_settings import atomic_write
 from core.image_scanner import ocr_image_bytes, scan_ocr_text, shrink_image, dhash
-from ai.agent import domain_age_days
 from bot.feedback import feedback_view
-from bot.voice import KIND_VI, SUSPICION_VI, VERDICT_VI
+from bot.voice import KIND_VI, VERDICT_VI
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +31,9 @@ AFTER_BAN = 600
 MAX_LINKS = 5
 # Gemini must be at least this sure an honeypot image is a scam to ban on it.
 SCAM_IMAGE_CONFIDENCE = 0.8
+# Bigger attachments are not images worth checking (scam lures are screenshots),
+# and downloading/OCRing them would only stall the bot.
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 def _fingerprint(data: bytes):
@@ -51,18 +53,33 @@ class MessageHandler:
         self.feedback = feedback  # core.feedback.FeedbackStore: review buttons + image fingerprints
         self.warn_file = Path(__file__).resolve().parent.parent / "data" / "warnings.json"
         self.warns = self._load_warns()
-        self.timeout_durations = config.TIMEOUT_DURATIONS
         self.honeypot_warn_limit = config.HONEYPOT_WARN_LIMIT
-        self._media_posts: dict[int, deque] = {}  # user id -> (time, channel id) of media/link posts
-        self._banned_recently: dict[int, float] = {}  # user id -> ban time, one ban per burst
+        # Keyed by (guild id, user id): what someone does in one server says
+        # nothing about the others.
+        self._media_posts: dict[tuple, deque] = {}  # -> (time, channel id) of media/link posts
+        self._banned_recently: dict[tuple, float] = {}  # -> ban time, one ban per burst
         self._last_ping = 0.0  # last time Mari pinged Sensei about a suspicious post
-        self._asks: dict[int, list] = {}  # user id -> (time, Mari's in-channel question) about them
+        self._asks: dict[tuple, list] = {}  # -> (time, Mari's in-channel question) about them
+        self._downloads: dict[int, bytes] = {}  # attachment id -> bytes, for the last few images
+
+    @staticmethod
+    def _key(message) -> tuple:
+        return getattr(message.guild, "id", 0), message.author.id
+
+    async def _read(self, att) -> bytes:
+        """An attachment's bytes, downloaded once although several checks look at it."""
+        data = self._downloads.get(att.id)
+        if data is None:
+            data = self._downloads[att.id] = await att.read()
+            while len(self._downloads) > 8:
+                self._downloads.pop(next(iter(self._downloads)))
+        return data
 
     def _note_media_post(self, message) -> set[int]:
         """Record a media/link post and return the channels this author posted
         media/links in during the last SPAM_WINDOW_S seconds."""
         now = time.time()
-        posts = self._media_posts.setdefault(message.author.id, deque(maxlen=20))
+        posts = self._media_posts.setdefault(self._key(message), deque(maxlen=20))
         if message.attachments or URLUtils.extract_urls(message.content or ""):
             posts.append((now, message.channel.id))
         while posts and now - posts[0][0] > SPAM_WINDOW_S:
@@ -113,18 +130,6 @@ class MessageHandler:
         self._save_warns()
         return count
 
-    def _parse_duration(self, value: str) -> timedelta:
-        value = value.strip().lower()
-        if value.endswith("d"):
-            return timedelta(days=int(value[:-1]))
-        if value.endswith("h"):
-            return timedelta(hours=int(value[:-1]))
-        if value.endswith("m"):
-            return timedelta(minutes=int(value[:-1]))
-        if value.endswith("s"):
-            return timedelta(seconds=int(value[:-1]))
-        return timedelta(minutes=10)
-
     def _reset_warn(self, key: str):
         if self.warns.pop(key, None) is not None:
             self._save_warns()
@@ -167,132 +172,7 @@ class MessageHandler:
             logger.warning("Could not write scam catch log: %s", exc)
 
     # ------------------------------------------------------------------
-    # Borderline agent layer (Gemini)
-    # ------------------------------------------------------------------
-    def _is_borderline(self, detail: dict, verdict: str) -> bool:
-        if not (self.agent and getattr(self.agent, "enabled", False)):
-            return False
-        if verdict not in ("phishing", "scam"):
-            return False
-        prob = detail.get("probability")
-        if prob is None:
-            return False
-        sources = detail.get("sources", [])
-        hard = ("blacklist" in sources) or any(str(s).startswith("scanner:") for s in sources)
-        if hard:
-            return False
-        low = float(getattr(self.config, "AI_BORDERLINE_LOW", 0.0))
-        high = float(getattr(self.config, "AI_BORDERLINE_HIGH", 0.9))
-        return low <= prob < high
-
-    async def _recent_messages(self, message, author, limit: int = 5):
-        out = []
-        try:
-            async for m in message.channel.history(limit=50):
-                if m.id == message.id:
-                    continue
-                if m.author.id == author.id:
-                    out.append((m.content or "")[:200])
-                    if len(out) >= limit:
-                        break
-        except Exception as exc:
-            logger.warning("Could not fetch recent messages: %s", exc)
-        return out
-
-    async def _handle_borderline(self, message, url, verdict, detail, guild) -> bool:
-        """
-        Hand a borderline case to the Gemini agent: investigate -> (optional data
-        fetch) -> explain -> post to the mod log. Returns True if the case was
-        flagged (no auto-action); returns False if the agent is unavailable or
-        fails, so the caller falls back to the original LightGBM action.
-        """
-        if not (self.agent and getattr(self.agent, "enabled", False)):
-            return False
-
-        author = message.author
-        domain = URLUtils.get_domain(url)
-
-        try:
-            from ai.feature_extractor import extract_features
-            raw = extract_features(url)
-        except Exception:
-            raw = {}
-
-        age_days = None
-        created = getattr(author, "created_at", None)
-        if created is not None:
-            try:
-                age_days = (datetime.now(timezone.utc) - created).days
-            except Exception:
-                age_days = None
-
-        prior = 0
-        if guild and self.guild_settings:
-            prior = len(self.guild_settings.get_violations(guild.id, author.id))
-
-        case = {
-            "guild_id": getattr(guild, "id", None),
-            "user_id": getattr(author, "id", None),
-            "user": str(author),
-            "channel": getattr(message.channel, "name", None),
-            "message_text": (message.content or "")[:500],
-            "url": url,
-            "domain": domain,
-            "verdict": verdict,
-            "probability": detail.get("probability"),
-            "shap_top_features": detail.get("top_features"),
-            "url_features": {
-                k: raw.get(k)
-                for k in (
-                    "url_length", "domain_length", "subdomain_depth", "entropy",
-                    "num_digits", "num_special", "is_ip_address", "tld_suspicious",
-                )
-                if k in raw
-            },
-            "account_age_days": age_days,
-            "prior_violations": prior,
-        }
-
-        # 1) Investigate: let the agent decide what extra data to gather.
-        inv = await self.agent.investigate_case(case)
-        if inv:
-            if inv.get("fetch_recent_messages"):
-                case["recent_messages"] = await self._recent_messages(message, author)
-            if inv.get("check_domain_age"):
-                loop = asyncio.get_event_loop()
-                case["domain_age_days"] = await loop.run_in_executor(
-                    None, domain_age_days, domain
-                )
-            case["investigation"] = inv
-
-        # 2) Explain: produce the mod-log assessment.
-        explanation = await self.agent.explain_case(case)
-        if not explanation:
-            return False  # agent failed -> fall back to the original action
-
-        prob = detail.get("probability")
-        susp = (inv or {}).get("suspicion", "unknown")
-        await self._notify(
-            guild, message.channel,
-            f"**Một ca nghi ngờ cần mod xem giúp**: {author} ở "
-            f"#{getattr(message.channel, 'name', '?')}\n"
-            f"Liên kết: `{url}` | AI đánh giá: `{VERDICT_VI.get(verdict, verdict)}` "
-            f"(p={prob:.2f}) | mức nghi ngờ: `{SUSPICION_VI.get(susp, susp)}`\n"
-            f"{explanation}\n"
-            f"Mari chưa làm gì cả, xin mod xem giúp và quyết định ạ.",
-            view=self._case_view(message, review=True, verdict=verdict, url=url),
-        )
-        logger.info(
-            "Borderline flagged | user=%s | url=%s | p=%.3f | suspicion=%s",
-            getattr(author, "id", "?"),
-            url,
-            prob if prob is not None else -1,
-            susp,
-        )
-        return True
-
-    # ------------------------------------------------------------------
-    # Helpers for scam image action
+    # Log channel
     # ------------------------------------------------------------------
     def _get_log_channel(self, guild: discord.Guild):
         """Resolve the log channel: per-guild setting wins, else env LOG_CHANNEL_ID."""
@@ -320,101 +200,13 @@ class MessageHandler:
             logger.warning("Could not send moderation notice: %s", exc)
             return None
 
-    async def _handle_scam_image(
-        self,
-        message: discord.Message,
-        verdict: str,
-        filename: str,
-        ocr_text: str,
-        image_hash: int | None = None,
-    ) -> None:
-        """
-        Khi OCR phát hiện scam image:
-          1. Xoá message
-          2. Ban user
-          3. Gửi alert ngắn vào channel
-          4. Log chi tiết vào log channel
-        """
-        author  = message.author
-        channel = message.channel
-        guild   = message.guild
-
-        # Bảo vệ: không ban admin
-        if guild and author.guild_permissions.administrator:
-            logger.warning("Scam image from admin %s — skipping ban.", author)
-            return
-
-        # 1. Xoá message
-        try:
-            await message.delete()
-            logger.info(
-                "Deleted scam image message | user=%s | file=%s | verdict=%s",
-                author.id, filename, verdict,
-            )
-        except discord.NotFound:
-            logger.warning("Message already deleted | file=%s", filename)
-        except discord.Forbidden:
-            logger.warning("No permission to delete message | file=%s", filename)
-
-        # 2. Ban user
-        banned = False
-        try:
-            await guild.ban(
-                author,
-                reason=f"Phát hiện ảnh scam ({verdict}) | tệp={filename}",
-                delete_message_days=1,
-            )
-            banned = True
-            self._stat(guild, "auto_bans")
-            self._record(guild, author.id, reason=f"Ảnh scam ({verdict}) | tệp={filename}")
-            self._log_catch(guild, author, f"image:{verdict}", f"{filename} | {ocr_text[:120]}", channel)
-            logger.info("Banned user %s (ID: %s) for scam image.", author, author.id)
-        except discord.Forbidden:
-            logger.error("No permission to ban %s.", author)
-        except Exception as exc:
-            logger.error("Ban failed for %s: %s", author, exc)
-
-        # 3. Alert ngắn gọn — gửi vào kênh log riêng (fallback kênh hiện tại nếu chưa cấu hình)
-        try:
-            action = "Đã xóa tin nhắn và ban người gửi." if banned else "Đã xóa tin nhắn."
-            alert = (
-                f"**Mari đã tìm thấy một ảnh scam** từ **{author}** (kết quả: `{VERDICT_VI.get(verdict, verdict)}`)\n"
-                f"Ảnh: `{filename}`\n"
-                f"{action}\nMọi người nhớ giữ gìn bản thân nhé."
-            )
-            await self._notify(guild, channel, alert,
-                               view=self._case_view(message, verdict=verdict, image_hash=image_hash))
-        except Exception as exc:
-            logger.warning("Could not send scam alert: %s", exc)
-
-        # 4. Log chi tiết vào log channel
-        if guild:
-            log_channel = self._get_log_channel(guild)
-            if log_channel:
-                try:
-                    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                    preview = ocr_text[:200].replace("\n", " ") if ocr_text else "(trống)"
-                    log_msg = (
-                        f"```\n"
-                        f"[NHẬT KÝ ẢNH SCAM] {ts}\n"
-                        f"Server     : {guild.name}\n"
-                        f"Kênh       : #{channel.name}\n"
-                        f"Người dùng : {author} (ID: {author.id})\n"
-                        f"Tệp        : {filename}\n"
-                        f"Kết quả    : {verdict}\n"
-                        f"Chữ trong ảnh: {preview}\n"
-                        f"Đã ban     : {'Có' if banned else 'Không'}\n"
-                        f"```"
-                    )
-                    await log_channel.send(log_msg)
-                except Exception as exc:
-                    logger.warning("Could not send to log channel: %s", exc)
-
     # ------------------------------------------------------------------
     # Honeypot channel
     # ------------------------------------------------------------------
     @staticmethod
     def _is_image_attachment(attachment) -> bool:
+        if attachment.size > MAX_IMAGE_BYTES:
+            return False
         if attachment.content_type:
             return attachment.content_type.startswith("image/")
         return attachment.filename.lower().endswith(
@@ -449,7 +241,7 @@ class MessageHandler:
             if not self._is_image_attachment(att):
                 continue
             try:
-                raw = await att.read()
+                raw = await self._read(att)
                 image_hash = await asyncio.to_thread(_fingerprint, raw)
                 # Gemini looks at the picture itself — far better than OCR on
                 # screenshots of fake Nitro/Steam pages. Honeypot posts are rare,
@@ -490,12 +282,12 @@ class MessageHandler:
         author = message.author
         # A spam burst can reach here from several messages at once: act once
         # per burst (time-based, so a later /unban + re-offence is still handled).
-        now = time.time()
-        if now - self._banned_recently.get(author.id, 0) < 60:
+        now, key = time.time(), self._key(message)
+        if now - self._banned_recently.get(key, 0) < AFTER_BAN:
             return
         if len(self._banned_recently) > 1000:
-            self._banned_recently = {u: t for u, t in self._banned_recently.items() if now - t < 60}
-        self._banned_recently[author.id] = now
+            self._banned_recently = {k: t for k, t in self._banned_recently.items() if now - t < AFTER_BAN}
+        self._banned_recently[key] = now
         if not already_deleted:
             try:
                 await message.delete()
@@ -509,7 +301,7 @@ class MessageHandler:
                 await guild.ban(author, reason=reason, delete_message_days=1)
                 banned = True
                 # Questions to Sensei about this burst's earlier posts are moot now.
-                for _, ask in self._asks.pop(author.id, []):
+                for _, ask in self._asks.pop(key, []):
                     try:
                         await ask.delete()
                     except discord.HTTPException:
@@ -570,6 +362,7 @@ class MessageHandler:
             pass
 
         count = self._bump_warn(f"hp:{author.id}")
+        self._stat(message.guild, "warnings")
         if count > self.honeypot_warn_limit:
             await self._honeypot_ban(
                 message,
@@ -592,13 +385,14 @@ class MessageHandler:
                 logger.warning("Honeypot: cannot post warning in %s", message.channel)
 
     async def handle(self, message):
-        """Entry point for every message: known scams anywhere, then honeypot
-        mode, else links, then images."""
+        """Entry point for every message, the same rule in every server: known
+        scams anywhere; bans in the honeypot (if the server has one) and for a
+        spam burst that hit it; everywhere else only hide and ask Sensei."""
         if message.author.bot:
             return
 
         guild = message.guild
-        if guild and time.time() - self._banned_recently.get(message.author.id, 0) < AFTER_BAN:
+        if guild and time.time() - self._banned_recently.get(self._key(message), 0) < AFTER_BAN:
             try:  # the rest of a burst from someone just banned: no need to ask Sensei
                 await message.delete()
             except (discord.NotFound, discord.Forbidden):
@@ -607,44 +401,40 @@ class MessageHandler:
         honeypot_id = self._honeypot_channel_id(guild)
         spread = self._note_media_post(message)
 
-        # Copies of confirmed scams are caught in any channel, even in honeypot
-        # mode: a list or fingerprint match is a fact, not a guess.
+        # Copies of confirmed scams are caught in any channel: a list or
+        # fingerprint match is a fact, not a guess.
         if await self._check_known_scams(message, honeypot_id, spread):
             return
 
-        if honeypot_id:
-            await self._route_honeypot_mode(message, honeypot_id, spread)
-            return
+        if honeypot_id and message.channel.id == honeypot_id:
+            await self._handle_honeypot(message, spread)
+        elif (honeypot_id in spread and len(spread) >= SPAM_CHANNELS
+              and not self._is_admin(message.author)):
+            # The honeypot post came first (and was only warned); the same
+            # burst is now landing in other channels too -> scam bot.
+            await self._honeypot_ban(
+                message,
+                reason=f"Honeypot: cùng một bài rải ra {len(spread)} kênh",
+                catch=("spread", f"{len(spread)} kênh trong {SPAM_WINDOW_S} giây"),
+            )
+        else:
+            await self._watch(message)
 
-        threshold = (
-            self.guild_settings.get_threshold(guild.id) if guild and self.guild_settings else None
-        )
-        for url in self._links(message):
-            if await self._check_url(message, url, guild, threshold):
-                return  # message already removed; don't act on it twice
-
-        if self.config.OCR_ENABLED:
-            for attachment in message.attachments:
-                if self._is_image_attachment(attachment):
-                    await self._check_image(message, attachment)
-
-    async def _find_known_scam(self, message, honeypot_mode: bool):
+    async def _find_known_scam(self, message):
         """(evidence, kind) for the first confirmed scam in the message, else
-        (None, ""): an image whose fingerprint matches a confirmed scam image,
-        or, in honeypot mode (where links are otherwise left alone), a link on
-        the scam lists. In normal mode _check_url already handles listed links."""
-        if honeypot_mode:
-            trusted = self.guild_settings.get_whitelist(message.guild.id) if self.guild_settings else set()
-            for url in URLUtils.extract_urls(message.content or ""):
-                domain = URLUtils.get_domain(url)
-                if not URLUtils.domain_in(domain, trusted) and self.evaluator.is_known_scam(domain):
-                    return {"url": url}, "link"
+        (None, ""): a link on the scam lists, or an image whose fingerprint
+        matches a confirmed scam image."""
+        trusted = self.guild_settings.get_whitelist(message.guild.id) if self.guild_settings else set()
+        for url in URLUtils.extract_urls(message.content or ""):
+            domain = URLUtils.get_domain(url)
+            if not URLUtils.domain_in(domain, trusted) and self.evaluator.is_known_scam(domain):
+                return {"url": url}, "link"
         if self.feedback and self.feedback.scam_hashes:
             for att in message.attachments:
                 if not self._is_image_attachment(att):
                     continue
                 try:
-                    image_hash = await asyncio.to_thread(_fingerprint, await att.read())
+                    image_hash = await asyncio.to_thread(_fingerprint, await self._read(att))
                 except Exception:
                     continue
                 if image_hash is not None and self.feedback.is_known_scam(image_hash):
@@ -658,7 +448,7 @@ class MessageHandler:
         warning limit). Returns True if the message was acted on."""
         if not message.guild or self._is_admin(message.author):
             return False
-        evidence, kind = await self._find_known_scam(message, bool(honeypot_id))
+        evidence, kind = await self._find_known_scam(message)
         if not evidence:
             return False
 
@@ -674,6 +464,7 @@ class MessageHandler:
 
         limit = self.honeypot_warn_limit
         count = self._bump_warn(f"ks:{author.id}")
+        self._stat(guild, "warnings")
         if count > limit:
             await self._honeypot_ban(message, reason=f"Vẫn đăng scam đã biết sau {limit} lần nhắc",
                                      catch=(f"{kind}:known", detail),
@@ -698,22 +489,23 @@ class MessageHandler:
         urls.sort(key=lambda u: not self.evaluator.is_known_scam(URLUtils.get_domain(u)))
         return urls[:MAX_LINKS]
 
-    def forgive(self, user_id: int):
+    def forgive(self, guild_id: int, user_id: int):
         """Called on an unban: their next posts are judged normally again."""
-        self._banned_recently.pop(user_id, None)
+        self._banned_recently.pop((guild_id, user_id), None)
 
     async def _ask_sensei(self, message, *, kind: str, verdict: str, reason: str, strong: bool,
                           url: str | None = None, image_hash: int | None = None, learn: bool = True,
-                          aside: str = ""):
+                          aside: str = "", note: str = ""):
         """Outside the honeypot Mari never bans on her own. A strong suspicion:
         hide the post and ask Sensei right in that channel, with Ban / Bỏ qua (the
         ping at most every PING_EVERY seconds). A weak one: leave the post and only
         note it in the log channel, without a ping. With learn=False a "Bỏ qua"
-        teaches Mari nothing (the item itself is a known scam)."""
+        teaches Mari nothing (the item itself is a known scam). `note` is
+        Gemini's view of the case, if any."""
         guild, channel, author = message.guild, message.channel, message.author
         view = (self._case_view(message, review=True, verdict=verdict, url=url, image_hash=image_hash)
                 if learn else self._case_view(message, review=True, verdict=verdict))
-        link = f"\nLiên kết: `{url}`" if url else ""
+        link = (f"\nLiên kết: `{url}`" if url else "") + (f"\n{note}" if note else "")
         if not strong:
             await self._notify(
                 guild, channel,
@@ -741,22 +533,27 @@ class MessageHandler:
         try:
             sent = await channel.send(text, view=view, allowed_mentions=discord.AllowedMentions(
                 users=mentioned, everyone=False, roles=False))
-            now = time.time()
-            asks = [a for a in self._asks.get(author.id, []) if now - a[0] < AFTER_BAN]
-            self._asks[author.id] = asks + [(now, sent)]
+            now, key = time.time(), self._key(message)
+            if len(self._asks) > 1000:  # forget people who were never banned
+                self._asks = {k: v for k, v in self._asks.items() if now - v[-1][0] < AFTER_BAN}
+            asks = [a for a in self._asks.get(key, []) if now - a[0] < AFTER_BAN]
+            self._asks[key] = asks + [(now, sent)]
         except discord.HTTPException:
             await self._notify(guild, channel, text, view=view)  # no right to speak here: log it instead
 
     async def _watch(self, message):
-        """Honeypot mode, any other channel: check links and image text, and ask
+        """Every channel but the honeypot: check links and image text, and ask
         Sensei about anything suspicious (see _ask_sensei). Never bans."""
-        if not message.guild or self._is_admin(message.author):
+        guild = message.guild
+        if not guild or self._is_admin(message.author):
             return
-        trusted = self.guild_settings.get_whitelist(message.guild.id) if self.guild_settings else set()
+        gs = self.guild_settings
+        trusted = gs.get_whitelist(guild.id) if gs else set()
+        threshold = gs.get_threshold(guild.id) if gs else None
         for url in self._links(message):
             if URLUtils.domain_in(URLUtils.get_domain(url), trusted):
                 continue
-            detail = await self.evaluator.evaluate_detailed(url)
+            detail = await self.evaluator.evaluate_detailed(url, threshold=threshold)
             verdict = detail["verdict"]
             self._stat(message.guild, "urls_scanned")
             if verdict in ("safe", "none"):
@@ -767,7 +564,8 @@ class MessageHandler:
                       f"Mari đoán là {VERDICT_VI.get(verdict, verdict)}"
                       + (f", chắc khoảng {p:.0%}" if p is not None else ""))
             await self._ask_sensei(message, kind="link", verdict=verdict, url=url, reason=reason,
-                                   strong=external or (p is not None and p >= self.config.AI_OVERRIDE_THRESHOLD))
+                                   strong=external or (p is not None and p >= self.config.AI_OVERRIDE_THRESHOLD),
+                                   note="" if external else await self._gemini_note(message, url, verdict, p))
             return
         if not self.config.OCR_ENABLED:
             return
@@ -775,7 +573,7 @@ class MessageHandler:
             if not self._is_image_attachment(att):
                 continue
             try:
-                data = await att.read()
+                data = await self._read(att)
                 text = await asyncio.to_thread(ocr_image_bytes, data)
             except Exception as exc:
                 logger.warning("Watch OCR failed | %s | %s", att.filename, exc)
@@ -795,129 +593,15 @@ class MessageHandler:
                 )
                 return
 
-    async def _route_honeypot_mode(self, message, honeypot_id: int, spread: set):
-        """Honeypot mode: Mari bans only in the honeypot (and for a spam burst that
-        also hit it). Every other channel is watched, but there she only hides
-        and asks Sensei (_watch), so an over-eager verdict never bans anyone."""
-        if message.channel.id == honeypot_id:
-            await self._handle_honeypot(message, spread)
-        elif (honeypot_id in spread and len(spread) >= SPAM_CHANNELS
-              and not self._is_admin(message.author)):
-            # The honeypot post came first (and was only warned); the same
-            # burst is now landing in other channels too -> scam bot.
-            await self._honeypot_ban(
-                message,
-                reason=f"Honeypot: cùng một bài rải ra {len(spread)} kênh",
-                catch=("spread", f"{len(spread)} kênh trong {SPAM_WINDOW_S} giây"),
-            )
-        else:
-            await self._watch(message)
-
-    async def _check_url(self, message, url: str, guild, threshold) -> bool:
-        """Evaluate one link and act on it. Returns True if the message was removed."""
-        domain = URLUtils.get_domain(url)
-        # Per-server trusted domains (/whitelist add) are never scanned or actioned.
-        if guild and self.guild_settings and URLUtils.domain_in(
-            domain, self.guild_settings.get_whitelist(guild.id)
-        ):
-            return False
-        detail = await self.evaluator.evaluate_detailed(url, threshold=threshold)
-        verdict = detail["verdict"]
-        self._stat(guild, "urls_scanned")
-        logger.info(
-            "URL checked | user=%s | url=%s | domain=%s | verdict=%s",
-            getattr(message.author, "id", "unknown"), url, domain, verdict,
-        )
-        if verdict in ("safe", "none"):
-            return False
-
-        # Borderline agent layer: an uncertain AI-only verdict goes to the Gemini
-        # agent for review instead of an automatic ban. Falls back to the normal
-        # action if the agent is unavailable or fails.
-        if self._is_borderline(detail, verdict) and await self._handle_borderline(
-            message, url, verdict, detail, guild
-        ):
-            return False
-
-        try:
-            if verdict in ("malware", "phishing", "scam"):
-                await self._ban_for_link(message, url, verdict, guild)
-                return True
-            if verdict == "gambling":
-                await self._timeout_for_gambling(message, url, verdict, guild)
-                return True
-        except discord.NotFound:
-            logger.warning("Message not found for deletion | url=%s", url)
-        except discord.Forbidden:
-            await self._notify(
-                guild, message.channel,
-                "Mari chưa được cấp đủ quyền để xử lý việc này.",
-            )
-        return False
-
-    async def _ban_for_link(self, message, url: str, verdict: str, guild):
-        await message.delete()
-        self._stat(guild, "links_blocked")
-        await message.author.ban(reason=verdict)
-        self._stat(guild, "auto_bans")
-        self._record(guild, message.author.id, reason=verdict, url=url)
-        self._log_catch(guild, message.author, f"url:{verdict}", url, message.channel)
-        self._reset_warn(str(message.author.id))
-        await self._notify(
-            guild, message.channel,
-            f"Mari xin lỗi, Mari đã phải mời {message.author.mention} rời server vì "
-            f"{VERDICT_VI.get(verdict, verdict)}. Mari không vui gì khi làm vậy, chỉ mong giữ an toàn "
-            f"cho mọi người ở đây.\nLiên kết: `{url}`",
-            view=self._case_view(message, verdict=verdict, url=url),
-        )
-
-    async def _timeout_for_gambling(self, message, url: str, verdict: str, guild):
-        """Delete + escalating timeout (TIMEOUT_DURATIONS); ban at the 5th warning."""
-        await message.delete()
-        self._stat(guild, "links_blocked")
-        warn_count = self._bump_warn(str(message.author.id))
-        duration = self.timeout_durations[min(warn_count - 1, len(self.timeout_durations) - 1)].strip()
-        reason = f"nội dung {VERDICT_VI.get(verdict, verdict)} | nhắc {warn_count}/5"
-        until = datetime.now(timezone.utc) + self._parse_duration(duration)
-        await message.author.timeout(until, reason=reason)
-        self._stat(guild, "warnings")
-        self._record(guild, message.author.id, reason=reason, url=url)
-        await self._notify(
-            guild, message.channel,
-            f"{message.author.mention}, Mari xin phép mời bạn tạm nghỉ một lát ({duration}) vì "
-            f"{reason}. Bạn để ý giúp Mari nhé, Mari thà nhẹ nhàng nhắc bạn còn hơn phải trách bạn.",
-        )
-        if warn_count >= 5:
-            await message.author.ban(reason=f"Đã bị nhắc {warn_count} lần")
-            self._reset_warn(str(message.author.id))
-            self._stat(guild, "auto_bans")
-            self._record(guild, message.author.id, reason=f"Bị ban sau {warn_count} lần nhắc", url=url)
-            await self._notify(
-                guild, message.channel,
-                f"Mari thật lòng xin lỗi. Sau {warn_count} lần nhắc, Mari đành phải mời "
-                f"{message.author.mention} rời server. Mari đã cho bạn ấy mọi cơ hội có thể.",
-            )
-
-    async def _check_image(self, message, attachment):
-        """OCR an image; ban only on a clear match (2+ scam phrases) — one phrase
-        such as "login" on an ordinary screenshot is no reason to ban."""
-        try:
-            data = await attachment.read()
-            text = await asyncio.to_thread(ocr_image_bytes, data)
-            if not (text and text.strip()):
-                return
-            verdict = scan_ocr_text(text)
-            logger.info(
-                "OCR extracted text | message=%s | attachment=%s | verdict=%s",
-                message.id, attachment.filename, verdict,
-            )
-            if verdict == "scam":
-                await self._handle_scam_image(
-                    message=message, verdict=verdict, filename=attachment.filename, ocr_text=text,
-                    image_hash=await asyncio.to_thread(_fingerprint, data),
-                )
-        except Exception as exc:
-            logger.warning(
-                "OCR failed | message=%s | attachment=%s | error=%s",
-                message.id, attachment.filename, exc,
-            )
+    async def _gemini_note(self, message, url: str, verdict: str, p) -> str:
+        """Gemini's two-sentence view of a link only the model flagged, for
+        Sensei's question (it is also what /why answers from later), or ""."""
+        if not (self.agent and getattr(self.agent, "enabled", False)):
+            return ""
+        out = await self.agent.explain_case({
+            "guild_id": message.guild.id, "user_id": message.author.id, "user": str(message.author),
+            "channel": getattr(message.channel, "name", None),
+            "message_text": (message.content or "")[:500],
+            "url": url, "domain": URLUtils.get_domain(url), "verdict": verdict, "probability": p,
+        })
+        return f"Gemini nhận xét: {out.strip()}" if out else ""

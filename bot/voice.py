@@ -7,7 +7,6 @@ import re
 VERDICT_VI = {"phishing": "lừa đảo đánh cắp tài khoản", "malware": "mã độc",
               "scam": "lừa đảo", "gambling": "cờ bạc"}
 KIND_VI = {"link": "liên kết", "image": "hình ảnh"}
-SUSPICION_VI = {"low": "thấp", "medium": "trung bình", "high": "cao"}
 
 # Calling Mari at the start of a message: "Mari ơi", "Mari à", "Mari ạ", "Mari này",
 # "Mari nè", "Mari ới", "Mari, ...", "Mari!" or just "Mari", optionally after

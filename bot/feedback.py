@@ -59,7 +59,7 @@ class FeedbackButton(
         try:
             if self.action == "wrong":
                 await guild.unban(target, reason=f"{user} đã sửa lại quyết định")
-                bot.handler.forgive(case["user_id"])
+                bot.handler.forgive(guild.id, case["user_id"])
             elif self.action == "ban":
                 await guild.ban(target, reason=f"{user} xác nhận scam (ca {self.case_id})",
                                 delete_message_days=1)

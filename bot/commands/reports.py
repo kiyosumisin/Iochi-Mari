@@ -1,6 +1,7 @@
 """Reporting commands: /stats, /scamlog, /why."""
 
 import csv
+import io
 
 import discord
 from discord import app_commands
@@ -52,10 +53,15 @@ class ReportCommands(AdminCog):
 
     # -- Scam catch log ------------------------------------------------------
     @app_commands.command(name="scamlog", description="Xem các vụ scam đã bắt (nhật ký bằng chứng)")
+    @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
     async def scamlog(self, interaction: discord.Interaction):
+        """Only this server's catches, shown only to the admin who asked: the log
+        names people and their IDs."""
         try:
-            rows = load_catches()
+            # ponytail: the log stores the server's name, not its ID; add a
+            # server_id column if two servers ever share a name.
+            rows = [r for r in load_catches() if r.get("server") == interaction.guild.name]
         except Exception as e:
             await say(interaction, f"Mari xin lỗi, Mari không đọc được nhật ký. `({e})`")
             return
@@ -78,7 +84,13 @@ class ReportCommands(AdminCog):
                 inline=False,
             )
         embed.set_footer(text=f"Đang hiện {len(recent)} vụ gần nhất trên tổng {total}, nhật ký đầy đủ ở file đính kèm.")
-        await interaction.response.send_message(embed=embed, file=discord.File(str(CATCH_LOG)))
+        out = io.StringIO()
+        w = csv.DictWriter(out, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+        await interaction.response.send_message(
+            embed=embed, ephemeral=True,
+            file=discord.File(io.BytesIO(out.getvalue().encode("utf-8")), filename="scam_catches.csv"))
 
     # -- Why (Gemini agent) --------------------------------------------------
     @app_commands.command(name="why", description="Hỏi Mari vì sao một người bị đánh dấu hoặc bị xử lý")
@@ -94,7 +106,7 @@ class ReportCommands(AdminCog):
         if not record:
             await say(interaction, f"Mari chưa có ghi chép phân tích nào về **{user}** cả.")
             return
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         answer = await agent.answer_why(record)
         if not answer:
             await interaction.followup.send(

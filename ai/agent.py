@@ -7,8 +7,7 @@ it adds something.
 
 Capabilities                                          budget
 ------------                                          ------
-explain_case(case)      -> str    note on a borderline link for the mod log   full
-investigate_case(case)  -> dict   (JSON) what extra data to gather for it     full
+explain_case(case)      -> str    note on a link only the model flagged      full
 answer_why(record)      -> str    a moderator's /why, from the recorded case  full
 classify_scam_image(image) -> dict  (JSON) is this picture a scam lure        full
 translate(text, code, image) -> dict  flag-reaction translation               keeps 30%
@@ -23,8 +22,7 @@ Fails safe: on any error, timeout or rate limit a method returns None and the
 caller carries on without Gemini (the LightGBM verdict, OCR, "try again later").
 
 Conventions: text people read is Vietnamese (explanations, /why, chat, image
-reasons); fields only Mari reads (investigate_case's reason) stay English. No
-emoji anywhere.
+reasons). No emoji anywhere.
 """
 
 from __future__ import annotations
@@ -55,20 +53,10 @@ _AGENT_LOG = Path(__file__).resolve().parent.parent / "log" / "agent_calls.jsonl
 # ---------------------------------------------------------------------------
 EXPLAIN_SYSTEM = (
     "You are the analysis assistant for Mari, a Discord anti-scam moderation bot. "
-    "You are given a borderline message the bot was unsure about. Write a concise "
-    "assessment of 2-3 sentences for the moderator log: what looks suspicious or "
-    "benign and why the case is borderline. Write in Vietnamese only. No emoji. State the "
+    "You are given a message whose link only the bot's URL model flagged, so it is "
+    "unsure. Write a concise assessment of 2-3 sentences for the moderator: what looks "
+    "suspicious or benign about the link and the message. Write in Vietnamese only. No emoji. State the "
     "assessment plainly; do not address anyone and do not invent facts."
-)
-
-INVESTIGATE_SYSTEM = (
-    "You are the triage assistant for Mari, a Discord anti-scam moderation bot. "
-    "Given a borderline case, decide whether gathering more data would help the "
-    "decision. Respond ONLY with a JSON object using exactly these keys: "
-    '"need_more_data" (boolean), "fetch_recent_messages" (boolean), '
-    '"check_domain_age" (boolean), "suspicion" (one of "low","medium","high"), '
-    '"reason" (a short English string). Be conservative: only request data that is '
-    "clearly useful. No emoji."
 )
 
 WHY_SYSTEM = (
@@ -173,24 +161,6 @@ SCAM_IMAGE_SYSTEM = (
     'with exactly these keys: "scam" (boolean), "confidence" (number from 0 to 1) and '
     '"reason" (a short phrase in Vietnamese, e.g. "quà Nitro giả kèm mã QR").'
 )
-
-
-def domain_age_days(domain: str):
-    """Rough domain age in days via WHOIS, or None. Blocking — run in an executor."""
-    try:
-        import whois  # python-whois, optional
-        info = whois.whois(domain)
-        created = info.creation_date
-        if isinstance(created, list):
-            created = created[0] if created else None
-        if created is None:
-            return None
-        if getattr(created, "tzinfo", None) is None:
-            created = created.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - created).days
-    except Exception as exc:
-        logger.debug("WHOIS lookup failed for %s: %s", domain, exc)
-        return None
 
 
 class MariAgent:
@@ -304,20 +274,6 @@ class MariAgent:
         out = await self._generate(EXPLAIN_SYSTEM, prompt)
         self._log_call("explain", case, out)
         return out
-
-    # -- public: decide what extra data to gather (structured JSON) ----------
-    async def investigate_case(self, case: dict):
-        prompt = self._case_prompt(case, "Decide what extra data, if any, to gather.")
-        out = await self._generate(INVESTIGATE_SYSTEM, prompt, json_out=True)
-        self._log_call("investigate", case, out)
-        if not out:
-            return None
-        try:
-            data = json.loads(out)
-            return data if isinstance(data, dict) else None
-        except Exception as exc:
-            logger.warning("Gemini investigate JSON parse failed: %s", exc)
-            return None
 
     # -- public: chat with the owner ("Mari ơi ...") -------------------------
     async def chat(self, history: list[tuple[str, str]], text: str, images: list[bytes] = ()):
