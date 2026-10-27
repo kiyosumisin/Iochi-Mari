@@ -9,6 +9,7 @@ import discord
 import logging
 from core.url_utils import URLUtils
 from core.guild_settings import atomic_write
+from core.retention import CATCH_LOG
 from core.image_scanner import ocr_image_bytes, scan_ocr_text, shrink_image, dhash
 from bot.feedback import feedback_view
 from bot.voice import KIND_VI, VERDICT_VI
@@ -147,16 +148,15 @@ class MessageHandler:
     def _log_catch(self, guild, author, category: str, detail: str, channel):
         """Append a successful scam catch to log/scam_catches.csv (evidence trail)."""
         try:
-            log_dir = Path(__file__).resolve().parent.parent / "log"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            path = log_dir / "scam_catches.csv"
+            path = CATCH_LOG
+            path.parent.mkdir(parents=True, exist_ok=True)
             new = not path.exists() or path.stat().st_size == 0
             with path.open("a", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
                 if new:
                     w.writerow([
                         "timestamp_utc", "server", "channel",
-                        "user", "user_id", "category", "detail", "action",
+                        "user", "user_id", "category", "detail", "action", "server_id",
                     ])
                 w.writerow([
                     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -167,6 +167,7 @@ class MessageHandler:
                     category,
                     (detail or "")[:300].replace("\n", " ").replace("\r", " "),
                     "banned",
+                    getattr(guild, "id", ""),
                 ])
         except Exception as exc:
             logger.warning("Could not write scam catch log: %s", exc)

@@ -15,7 +15,7 @@ import discord
 
 from bot.voice import CALL, VERDICT_VI, is_sensei
 from .moderation import SCAN_LIMIT, delete_latest, purge_scope
-from .reports import load_catches
+from .reports import catches_of
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +39,18 @@ def _catch_reason(row: dict) -> str:
     return f"`{row.get('category')}`"
 
 
-def catches_report(guild_name: str, days: int) -> str:
+def catches_report(guild, days: int) -> str:
     """Who Mari caught in this server today (days=0) or in the last `days` days,
     read from the real catch log, never from the model's imagination."""
     now = datetime.now(VN_TIME)
     since = now.replace(hour=0, minute=0, second=0, microsecond=0) if days == 0 else now - timedelta(days=days)
     caught = []
-    for row in load_catches():
+    for row in catches_of(guild):
         try:
             ts = datetime.strptime(row["timestamp_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
         except (KeyError, ValueError):
             continue
-        if row.get("server") == guild_name and ts >= since:
+        if ts >= since:
             caught.append((ts.astimezone(VN_TIME), row))
     when = "Hôm nay" if days == 0 else f"Trong {days} ngày qua"
     if not caught:
@@ -81,7 +81,7 @@ async def answer(bot, request: discord.Message, action: dict) -> str | None:
     if kind == "scamlog":
         try:
             days = min(max(int(action.get("days") or 0), 0), 23)  # the log keeps 23 days
-            return catches_report(guild.name, days)
+            return catches_report(guild, days)
         except (ValueError, OSError) as e:
             return f"Em xin lỗi, em chưa đọc được nhật ký bắt scam. `({e})`"
 

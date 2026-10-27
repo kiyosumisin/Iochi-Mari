@@ -18,6 +18,13 @@ def load_catches() -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def catches_of(guild) -> list[dict]:
+    """This server's rows of the catch log. Rows written before the server_id
+    column existed carry only the name, so those are matched by name."""
+    return [r for r in load_catches()
+            if (r.get("server_id") == str(guild.id) if r.get("server_id") else r.get("server") == guild.name)]
+
+
 class ReportCommands(AdminCog):
     # -- Stats ---------------------------------------------------------------
     @app_commands.command(name="stats", description="Xem tóm tắt việc bảo vệ server này")
@@ -59,9 +66,7 @@ class ReportCommands(AdminCog):
         """Only this server's catches, shown only to the admin who asked: the log
         names people and their IDs."""
         try:
-            # ponytail: the log stores the server's name, not its ID; add a
-            # server_id column if two servers ever share a name.
-            rows = [r for r in load_catches() if r.get("server") == interaction.guild.name]
+            rows = catches_of(interaction.guild)
         except Exception as e:
             await say(interaction, f"Mari xin lỗi, Mari không đọc được nhật ký. `({e})`")
             return
