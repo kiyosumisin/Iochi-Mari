@@ -151,7 +151,7 @@ class BasicCommands(MariCog):
             value=(
                 "`/honeypot set #channel` / `off` / `status` — Quản lý kênh bẫy (honeypot)\n"
                 "`/logchannel set #channel` / `off` / `status` — Kênh Mari gửi thông báo kiểm duyệt\n"
-                "`/datamine set #channel` / `off` / `status` — Đăng tin datamine mới của Discord\n"
+                "`/datamine set #channel` / `off` / `status` — Đăng tin datamine mới của Discord (chỉ Sensei)\n"
                 "`/whitelist add` / `remove` / `list` — Tên miền tin cậy (không cần kiểm tra)\n"
                 "`/threshold <0.0-1.0>` — Chỉnh độ nhạy phát hiện"
             ),

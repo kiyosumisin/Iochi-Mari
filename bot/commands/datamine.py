@@ -1,5 +1,7 @@
 """Discord datamine feed: relays new analysis comments from the public
-Discord-Datamining GitHub repo into a configured channel, verbatim.
+Discord-Datamining GitHub repo into a configured channel. Gemini retells each
+one in plain Vietnamese; without Gemini the comment is posted verbatim. Only
+Sensei can turn it on: each note costs a Gemini call.
 
 The comment body is never parsed, so changes to how the datamine is written
 need no code changes here — we only rely on stable GitHub API fields.
@@ -15,7 +17,7 @@ from discord import app_commands
 from discord.ext import tasks
 
 from core.guild_settings import atomic_write
-from .common import AdminCog, say
+from .common import AdminCog, is_owner, OWNER_ONLY_DENIAL, say
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +33,8 @@ def new_comments(events: list, last_id: int) -> list[dict]:
     return sorted((c for c in comments if c["id"] > last_id), key=lambda c: c["id"])
 
 
-def comment_embed(c: dict) -> discord.Embed:
-    body = c["body"]
+def comment_embed(c: dict, summary: str | None = None) -> discord.Embed:
+    body = summary or c["body"]
     if len(body) > 4000:
         body = body[:4000] + "\n…"
         if body.count("```") % 2:  # don't leave a code block open after cutting
@@ -44,7 +46,8 @@ def comment_embed(c: dict) -> discord.Embed:
         color=discord.Color.blurple(),
         timestamp=datetime.fromisoformat(c["created_at"]),
     )
-    embed.set_footer(text=f"Bản build {c['commit_id'][:7]} — xem đầy đủ ở liên kết phía trên")
+    told = "Mari kể lại cho dễ hiểu, bản gốc" if summary else "Xem đầy đủ"
+    embed.set_footer(text=f"Bản build {c['commit_id'][:7]} — {told} ở liên kết phía trên")
     return embed
 
 
@@ -65,6 +68,8 @@ class DatamineCommands(AdminCog):
     @datamine_group.command(name="set", description="Chọn kênh đăng tin datamine")
     @app_commands.describe(channel="Kênh để đăng tin datamine")
     async def datamine_set(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        if not await is_owner(interaction):
+            return await say(interaction, OWNER_ONLY_DENIAL)
         self.bot.guild_settings.set_datamine_channel(interaction.guild.id, channel.id)
         await say(
             interaction,
@@ -74,11 +79,15 @@ class DatamineCommands(AdminCog):
 
     @datamine_group.command(name="off", description="Ngừng đăng tin datamine")
     async def datamine_off(self, interaction: discord.Interaction):
+        if not await is_owner(interaction):
+            return await say(interaction, OWNER_ONLY_DENIAL)
         self.bot.guild_settings.set_datamine_channel(interaction.guild.id, 0)
         await say(interaction, "Vâng ạ. Từ giờ Mari sẽ không đăng tin datamine nữa.")
 
     @datamine_group.command(name="status", description="Xem tin datamine đang được đăng ở đâu")
     async def datamine_status(self, interaction: discord.Interaction):
+        if not await is_owner(interaction):
+            return await say(interaction, OWNER_ONLY_DENIAL)
         cid = self.bot.guild_settings.get_datamine_channel(interaction.guild.id)
         msg = (
             f"Mari đang đăng tin datamine vào <#{cid}>."
@@ -111,14 +120,18 @@ class DatamineCommands(AdminCog):
                 return
 
             # On the very first run just remember where we are — no backlog flood.
+            agent = getattr(self.bot, "agent", None)
             if not first_run:
                 channels = [
                     ch
                     for g in self.bot.guilds
                     if (ch := g.get_channel(self.bot.guild_settings.get_datamine_channel(g.id)))
                 ]
-                for c in fresh:
-                    embed = comment_embed(c)
+                for c in fresh if channels else ():
+                    summary = None
+                    if agent and agent.enabled:
+                        summary = await agent.explain_datamine(c["body"])
+                    embed = comment_embed(c, summary)
                     for ch in channels:
                         try:
                             await ch.send(embed=embed)
