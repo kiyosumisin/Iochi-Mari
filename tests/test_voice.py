@@ -49,6 +49,15 @@ def test_deleting_our_chat_spares_everyone_else():
     assert [i for i, x in msgs.items() if match(x)] == [1, 2, 7, 8]
 
 
+def test_mari_reads_the_embed_sensei_replies_to():
+    import types as T
+    from bot.commands.chat import _text_of
+    embed = T.SimpleNamespace(title="Datamine Discord", description="**Góc tester**\n- thử Conjure apps",
+                              fields=[], footer=T.SimpleNamespace(text="Bản build fdb5582"))
+    text = _text_of(T.SimpleNamespace(content="", embeds=[embed]))
+    assert "Góc tester" in text and "Conjure" in text and "fdb5582" in text, text
+
+
 if __name__ == "__main__":
     tests = [f for name, f in dict(globals()).items() if name.startswith("test_")]
     for t in tests:

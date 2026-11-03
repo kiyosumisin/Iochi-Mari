@@ -23,6 +23,17 @@ MAX_IMAGES = 3      # pictures per message (the Gemini relay caps a request at 4
 MAX_PAGES = 2       # links per message Mari reads for Sensei
 
 
+def _text_of(message: discord.Message, limit: int = 4000) -> str:
+    """A message's words, embeds included: a bot's post (Mari's datamine notes,
+    another bot's card) often has no text outside its embed."""
+    parts = [message.content or ""]
+    for e in message.embeds:
+        parts += [e.title or "", e.description or ""]
+        parts += [f"{f.name}: {f.value}" for f in e.fields]
+        parts.append(e.footer.text or "")
+    return "\n".join(p for p in parts if p).strip()[:limit]
+
+
 class ChatCog(MariCog):
     def __init__(self, bot):
         super().__init__(bot)
@@ -52,7 +63,7 @@ class ChatCog(MariCog):
                 if target:
                     # Who and what Sensei is pointing at ("bạn này", "ban người này", this picture).
                     about = (f"[Sensei đang trả lời tin nhắn của {target.author.display_name} "
-                             f"(<@{target.author.id}>): \"{(target.content or '')[:500]}\"]\n")
+                             f"(<@{target.author.id}>): \"{_text_of(target)}\"]\n")
                     images = images or await message_images(target, MAX_IMAGES)
                     links = links or URLUtils.extract_urls(target.content or "")
         if can_chat and (text or images):
