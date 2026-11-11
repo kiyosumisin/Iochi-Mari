@@ -320,7 +320,7 @@ class MessageHandler:
 
         action = "Đã xóa tin nhắn và ban người gửi." if banned else "Đã xóa tin nhắn."
         headline = headline or (
-            f"**Có kẻ đã sa vào bẫy.** Mari đang canh kênh bẫy thì bắt gặp **{author}** đăng bài ở đó, "
+            f"**Có kẻ đã sa vào bẫy.** Mari đang giám sát kênh bẫy thì bắt gặp **{author}** đăng bài ở đó, "
             f"nơi các thành viên đều đã được dặn là không đăng."
         )
         await self._notify(
