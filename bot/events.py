@@ -320,7 +320,8 @@ class MessageHandler:
 
         action = "Đã xóa tin nhắn và ban người gửi." if banned else "Đã xóa tin nhắn."
         headline = headline or (
-            f"**Có kẻ đã sa vào bẫy.** Mari bắt gặp **{author}** ở nơi mà người ngay thẳng sẽ không bước vào."
+            f"**Có kẻ đã sa vào bẫy.** Mari đang canh kênh bẫy thì bắt gặp **{author}** đăng bài ở đó, "
+            f"nơi các thành viên đều đã được dặn là không đăng."
         )
         await self._notify(
             guild, message.channel,
@@ -458,9 +459,11 @@ class MessageHandler:
         detail = evidence.get("url") or ", ".join(a.filename for a in message.attachments)
         headline = f"**Mari nhận ra một {KIND_VI[kind]} scam đã biết** từ **{author}** ở {where}."
         if channel.id == honeypot_id or len(spread) >= SPAM_CHANNELS:
+            # In the honeypot the usual "sa vào bẫy" notice says it all; naming
+            # the channel only matters for a burst caught elsewhere.
             await self._honeypot_ban(message, reason=f"Scam đã biết ({KIND_VI[kind]})",
-                                     catch=(f"{kind}:known", detail),
-                                     evidence=evidence, headline=headline)
+                                     catch=(f"{kind}:known", detail), evidence=evidence,
+                                     headline=None if channel.id == honeypot_id else headline)
             return True
 
         limit = self.honeypot_warn_limit

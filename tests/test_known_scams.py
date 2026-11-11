@@ -132,6 +132,8 @@ def test_known_scam_in_honeypot_is_banned_at_once():
     w = World()
     w.post(HONEYPOT, SCAM)
     assert ("ban", 42, "Scam đã biết (liên kết)") in w.log
+    notice = next(e[1] for e in w.log if e[0] == "send")
+    assert "sa vào bẫy" in notice and f"ch{HONEYPOT}" not in notice, notice  # no need to name the trap
 
 
 def test_known_image_outside_honeypot_is_warned_even_in_normal_mode():
