@@ -19,6 +19,7 @@ from core.image_scanner import dhash  # noqa: E402
 
 HONEYPOT, GENERAL = 100, 1
 SCAM = "https://d-giftnitro.com/claim"
+SHOWN = "hxxps://d-giftnitro[.]com/claim"  # how Mari repeats it: readable, not usable
 
 
 def _png() -> bytes:
@@ -39,6 +40,7 @@ class World:
     def __init__(self, honeypot=True, whitelist=()):
         tmp = Path(tempfile.mkdtemp())
         fb.CASES_FILE, fb.HASHES_FILE, fb.FEEDBACK_CSV = tmp / "c.json", tmp / "h.json", tmp / "f.csv"
+        fb.SAFE_URLS_FILE = tmp / "s.json"
         self.feedback = fb.FeedbackStore()
         self.feedback.add_scam_hash(dhash(IMG))
         self.log = []
@@ -114,7 +116,7 @@ def test_lone_known_scam_link_outside_honeypot_is_warned_not_banned():
     w.post(GENERAL, f"careful, this is a scam: {SCAM}")
     assert w.kinds().count("ban") == 0 and "delete" in w.kinds(), w.log
     notices = [e for e in w.log if e[0] == "send" and e[2] is not None]
-    assert len(notices) == 1 and "Liên kết: `" + SCAM in notices[0][1]
+    assert len(notices) == 1 and "Liên kết: `" + SHOWN in notices[0][1] and SCAM not in notices[0][1]
     assert [c.item.label for c in notices[0][2].children] == ["Ban", "Bỏ qua"]
     # The review case teaches nothing: dismissing it must not mark the scam safe.
     case = next(iter(w.feedback.cases.values()))
@@ -161,6 +163,20 @@ def test_strong_suspicion_is_hidden_and_sensei_asked_in_that_channel():
     assert [c.item.label for c in sends[0][2].children] == ["Ban", "Bỏ qua"]
     case = next(iter(w.feedback.cases.values()))
     assert case["url"] == "https://evil.example/login"  # "Bỏ qua" teaches Mari this link is fine
+
+
+def test_a_link_sensei_dismissed_is_not_asked_about_again():
+    w = World()
+    url = "https://evil.example/login"
+    w.verdicts[url] = {"verdict": "phishing", "probability": 0.97, "sources": []}
+    w.post(GENERAL, url)
+    w.feedback.resolve(next(iter(w.feedback.cases)), False, "sensei")  # "Bỏ qua"
+    before = len(w.log)
+    w.post(GENERAL, url, user=43)
+    assert len(w.log) == before, w.log[before:]
+    w.guild.id = 8  # another server never agreed to that
+    w.post(GENERAL, url, user=44)
+    assert len(w.log) > before
 
 
 def test_weak_suspicion_leaves_the_post_and_pings_no_one():
@@ -229,7 +245,7 @@ def test_a_server_without_honeypot_never_bans_on_a_guess():
     assert "ban" not in w.kinds() and "delete" in w.kinds(), w.log
     assert any(e[0] == "send" and "Sensei ơi" in e[1] for e in w.log)
     w.post(GENERAL, f"<{SCAM}>", user=43)            # a listed scam, even wrapped in <...>
-    assert "ban" not in w.kinds() and "Liên kết: `" + SCAM in w.log[-1][1], w.log
+    assert "ban" not in w.kinds() and "Liên kết: `" + SHOWN in w.log[-1][1], w.log
 
 
 def test_a_ban_in_one_server_does_not_touch_another():

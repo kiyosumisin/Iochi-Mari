@@ -121,7 +121,7 @@ def test_costly_checks_cover_at_most_five_links_known_scams_first():
     import types as T
     from bot.events import MessageHandler
     h = MessageHandler.__new__(MessageHandler)
-    h.evaluator = T.SimpleNamespace(is_known_scam=lambda dom: dom == "d-giftnitro.com")
+    h.evaluator, h.feedback = T.SimpleNamespace(is_known_scam=lambda dom: dom == "d-giftnitro.com"), None
     msg = T.SimpleNamespace(content=" ".join(f"https://ok{i}.example/" for i in range(8))
                             + " https://ok0.example/ https://d-giftnitro.com/claim")
     links = h._links(msg)
@@ -134,6 +134,13 @@ def test_links_are_cut_out_of_discord_markdown():
                  "__https://scam.gift/x__", "[bấm đây](https://scam.gift/x)", "HTTPS://scam.gift/x."):
         urls = URLUtils.extract_urls(text)
         assert [URLUtils.get_domain(u) for u in urls] == ["scam.gift"], (text, urls)
+
+
+def test_suspicious_links_are_repeated_defanged():
+    text = "Liên kết: `https://scam.gift/a.b?x=1`\nGemini nhận xét: trang HTTP://scam.gift/ giả Nitro."
+    out = URLUtils.defang(text)
+    assert "hxxps://scam[.]gift/a[.]b?x=1" in out and "hxxp://scam[.]gift/" in out, out
+    assert not URLUtils.extract_urls(out) and "Gemini nhận xét: trang" in out, out
 
 
 if __name__ == "__main__":

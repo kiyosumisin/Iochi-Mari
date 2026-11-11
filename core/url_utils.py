@@ -83,6 +83,14 @@ class URLUtils:
         return [u.rstrip(".,!?:;_~") for u in URLUtils.URL_REGEX.findall(text)]
 
     @staticmethod
+    def defang(text: str) -> str:
+        """Every link in `text` made unusable but still readable, the way security
+        notes write them: https://scam.gift/x -> hxxps://scam[.]gift/x. For echoing a
+        suspicious link where people could click or copy it."""
+        return URLUtils.URL_REGEX.sub(
+            lambda m: re.sub("(?i)^http", "hxxp", m.group()).replace(".", "[.]"), text)
+
+    @staticmethod
     def get_domain(url: str):
         # .hostname (not .netloc) drops "user@" and ":port", so the classic trick
         # https://discord.com@evil.com/ resolves to evil.com, the real destination.

@@ -41,7 +41,7 @@ def test_different_pictures_do_not_match():
 
 def test_blank_pictures_are_never_remembered_as_scams():
     with tempfile.TemporaryDirectory() as tmp:
-        fb.HASHES_FILE = Path(tmp) / "h.json"
+        fb.HASHES_FILE, fb.SAFE_URLS_FILE = Path(tmp) / "h.json", Path(tmp) / "s.json"
         store = fb.FeedbackStore()
         buf = io.BytesIO(); Image.new("RGB", (300, 300), (0, 0, 0)).save(buf, "PNG")
         store.add_scam_hash(dhash(buf.getvalue()))
@@ -52,6 +52,7 @@ def test_moderator_answers_are_recorded():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         fb.CASES_FILE, fb.HASHES_FILE, fb.FEEDBACK_CSV = tmp / "c.json", tmp / "h.json", tmp / "f.csv"
+        fb.SAFE_URLS_FILE = tmp / "s.json"
         h = dhash(_poster("FREE NITRO"))
         store = fb.FeedbackStore()
 
@@ -72,6 +73,12 @@ def test_moderator_answers_are_recorded():
         assert not store.is_known_scam(h)
         store.add_scam_hash(h)
         assert not store.is_known_scam(h)                # the safe list wins
+
+        # The link called safe is not questioned again, in that server only, until
+        # a moderator there says otherwise. The link confirmed as a scam never was.
+        store = fb.FeedbackStore()
+        assert store.is_safe_url(1, "https://docs.google.com/x/") and not store.is_safe_url(2, "https://docs.google.com/x")
+        assert not store.is_safe_url(1, "https://nitro-gift.example/")
 
         rows = list(csv.DictReader(fb.FEEDBACK_CSV.open(encoding="utf-8")))
         assert [(r["url"], r["label"]) for r in rows] == [

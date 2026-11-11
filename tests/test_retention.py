@@ -25,6 +25,7 @@ def test_old_records_are_purged_and_new_ones_kept():
         tmp = Path(tmp)
         rt.AGENT_LOG, rt.CATCH_LOG = tmp / "agent_calls.jsonl", tmp / "scam_catches.csv"
         fb.CASES_FILE, fb.HASHES_FILE = tmp / "cases.json", tmp / "hashes.json"
+        fb.SAFE_URLS_FILE = tmp / "safe_urls.json"
 
         rt.AGENT_LOG.write_text(
             json.dumps({"ts": OLD.isoformat(), "input": {"message_text": "old"}}) + "\n"

@@ -3,7 +3,8 @@
 Every case Mari acts on (or sends for review) gets a short id, remembered on
 disk so the buttons under its notice keep working after a restart. When a
 moderator answers, the verdict is recorded:
-  - links  -> ai/feedback.csv, read by `python -m ai.train --feedback`
+  - links  -> ai/feedback.csv, read by `python -m ai.train --feedback`; a link
+              called safe is also not questioned again in that server
   - images -> fingerprints of confirmed scam images (caught again anywhere on
               sight) and of images confirmed safe (never punished again)
 """
@@ -22,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CASES_FILE = ROOT / "data" / "feedback_cases.json"
 HASHES_FILE = ROOT / "data" / "image_hashes.json"
 FEEDBACK_CSV = ROOT / "ai" / "feedback.csv"
+SAFE_URLS_FILE = ROOT / "data" / "safe_urls.json"
 
 MALICIOUS_LABEL = 0   # same convention as ai/data/urls.csv (0 = malicious, 1 = benign)
 MATCH_DISTANCE = 6    # images whose fingerprints differ in <= 6 of 64 bits are "the same"
@@ -40,6 +42,9 @@ class FeedbackStore:
         hashes = _load(HASHES_FILE, {})
         self.scam_hashes = [int(h, 16) for h in hashes.get("scam", [])]
         self.safe_hashes = [int(h, 16) for h in hashes.get("safe", [])]
+        # guild id -> links a moderator of that server called safe. Per server: an
+        # admin elsewhere must not be able to wave a link through here.
+        self.safe_urls: dict[str, list[str]] = _load(SAFE_URLS_FILE, {})
 
     # -- cases -------------------------------------------------------------
     def new_case(self, kind: str, guild_id: int, user_id: int, *, verdict: str = "",
@@ -63,6 +68,7 @@ class FeedbackStore:
                             "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
         if case.get("url"):
             self._append_url_label(case["url"], malicious)
+            self._note_url(case["guild_id"], case["url"], malicious)
         if case.get("image_hash"):
             h = int(case["image_hash"], 16)
             self.add_scam_hash(h) if malicious else self.add_safe_hash(h)
@@ -77,6 +83,21 @@ class FeedbackStore:
         if old:
             self._save_cases()
         return len(old)
+
+    # -- links called safe -------------------------------------------------
+    def is_safe_url(self, guild_id: int, url: str) -> bool:
+        """A moderator of this server answered that this exact link is fine."""
+        return url.rstrip("/") in self.safe_urls.get(str(guild_id), ())
+
+    def _note_url(self, guild_id: int, url: str, malicious: bool):
+        urls = self.safe_urls.setdefault(str(guild_id), [])
+        url = url.rstrip("/")
+        if url in urls:
+            urls.remove(url)
+        if not malicious:
+            urls.append(url)
+            del urls[:-500]  # the 500 latest per server are plenty
+        atomic_write(SAFE_URLS_FILE, json.dumps(self.safe_urls, ensure_ascii=False))
 
     # -- image fingerprints ------------------------------------------------
     def is_known_scam(self, h: int) -> bool:

@@ -12,6 +12,7 @@ data/warnings.json
 ai/data/tranco.zip
 data/feedback_cases.json
 data/image_hashes.json
+data/safe_urls.json
 ai/feedback.csv
 .serena/
 ai/logs/

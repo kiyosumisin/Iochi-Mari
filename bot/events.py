@@ -486,10 +486,13 @@ class MessageHandler:
         return True
 
     def _links(self, message) -> list[str]:
-        """The message's links, without repeats, known scams first (the list check is
-        free, so a scam hidden behind five harmless links is still reached), at most
-        MAX_LINKS of them."""
+        """The message's links to judge, without repeats, known scams first (the list
+        check is free, so a scam hidden behind five harmless links is still reached),
+        at most MAX_LINKS of them. Links a moderator here already called safe are
+        left out (a listed scam is still caught: _find_known_scam does not ask here)."""
         urls = list(dict.fromkeys(URLUtils.extract_urls(message.content or "")))
+        if self.feedback and message.guild:
+            urls = [u for u in urls if not self.feedback.is_safe_url(message.guild.id, u)]
         urls.sort(key=lambda u: not self.evaluator.is_known_scam(URLUtils.get_domain(u)))
         return urls[:MAX_LINKS]
 
@@ -509,7 +512,8 @@ class MessageHandler:
         guild, channel, author = message.guild, message.channel, message.author
         view = (self._case_view(message, review=True, verdict=verdict, url=url, image_hash=image_hash)
                 if learn else self._case_view(message, review=True, verdict=verdict))
-        link = (f"\nLiên kết: `{url}`" if url else "") + (f"\n{note}" if note else "")
+        # Shown defanged: the question sits in a public channel, the link must not work there.
+        link = URLUtils.defang((f"\nLiên kết: `{url}`" if url else "") + (f"\n{note}" if note else ""))
         if not strong:
             await self._notify(
                 guild, channel,
